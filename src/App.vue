@@ -1,18 +1,45 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import WorldMap from "./components/WorldMap.vue";
 
 type AppView = "home" | "country-game";
 
-const currentView = ref<AppView>("home");
+const getViewFromPath = (): AppView =>
+  window.location.pathname.startsWith("/country-game")
+    ? "country-game"
+    : "home";
+
+const currentView = ref<AppView>(getViewFromPath());
+
+const setAppPath = (path: string) => {
+  if (window.location.pathname === path && !window.location.search) {
+    return;
+  }
+
+  window.history.pushState({}, "", path);
+};
+
+const syncViewFromPath = () => {
+  currentView.value = getViewFromPath();
+};
 
 const startCountryGame = () => {
   currentView.value = "country-game";
+  setAppPath("/country-game");
 };
 
 const returnHome = () => {
   currentView.value = "home";
+  setAppPath("/");
 };
+
+onMounted(() => {
+  window.addEventListener("popstate", syncViewFromPath);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("popstate", syncViewFromPath);
+});
 </script>
 
 <template>
@@ -38,7 +65,11 @@ const returnHome = () => {
           </p>
 
           <div class="hero-actions">
-            <button class="primary-action" type="button" @click="startCountryGame">
+            <button
+              class="primary-action"
+              type="button"
+              @click="startCountryGame"
+            >
               Start country guessing
             </button>
             <a class="secondary-action" href="#games">View games</a>
@@ -76,11 +107,15 @@ const returnHome = () => {
 
           <ul class="feature-list" aria-label="Country guessing features">
             <li>No map labels</li>
-            <li>Random prompts</li>
-            <li>Score and streak tracking</li>
+            <li>Multiplayer rooms</li>
+            <li>Timed rounds and leaderboards</li>
           </ul>
 
-          <button class="primary-action card-action" type="button" @click="startCountryGame">
+          <button
+            class="primary-action card-action"
+            type="button"
+            @click="startCountryGame"
+          >
             Enter game
           </button>
         </article>
@@ -101,8 +136,16 @@ const returnHome = () => {
   min-height: 100vh;
   padding: clamp(1rem, 2.5vw, 2rem);
   background:
-    radial-gradient(circle at top left, rgba(59, 130, 246, 0.24), transparent 34rem),
-    radial-gradient(circle at bottom right, rgba(249, 115, 22, 0.2), transparent 30rem),
+    radial-gradient(
+      circle at top left,
+      rgba(59, 130, 246, 0.24),
+      transparent 34rem
+    ),
+    radial-gradient(
+      circle at bottom right,
+      rgba(249, 115, 22, 0.2),
+      transparent 30rem
+    ),
     linear-gradient(135deg, #eff6ff 0%, #f8fafc 46%, #fff7ed 100%);
 }
 
@@ -274,8 +317,16 @@ button:focus-visible,
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 36px;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(219, 234, 254, 0.72)),
-    radial-gradient(circle at 20% 20%, rgba(125, 211, 252, 0.45), transparent 30%);
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.82),
+      rgba(219, 234, 254, 0.72)
+    ),
+    radial-gradient(
+      circle at 20% 20%,
+      rgba(125, 211, 252, 0.45),
+      transparent 30%
+    );
   box-shadow: 0 30px 80px rgba(15, 23, 42, 0.16);
 }
 
@@ -287,10 +338,19 @@ button:focus-visible,
   border: 10px solid rgba(255, 255, 255, 0.9);
   border-radius: 50%;
   background:
-    linear-gradient(90deg, transparent 48%, rgba(15, 23, 42, 0.14) 49%, transparent 51%),
-    linear-gradient(0deg, transparent 48%, rgba(15, 23, 42, 0.14) 49%, transparent 51%),
-    radial-gradient(circle at 35% 32%, #7dd3fc 0 15%, transparent 16%),
-    #38bdf8;
+    linear-gradient(
+      90deg,
+      transparent 48%,
+      rgba(15, 23, 42, 0.14) 49%,
+      transparent 51%
+    ),
+    linear-gradient(
+      0deg,
+      transparent 48%,
+      rgba(15, 23, 42, 0.14) 49%,
+      transparent 51%
+    ),
+    radial-gradient(circle at 35% 32%, #7dd3fc 0 15%, transparent 16%), #38bdf8;
   box-shadow:
     inset -28px -32px 70px rgba(30, 41, 59, 0.24),
     0 24px 50px rgba(14, 116, 144, 0.28);
