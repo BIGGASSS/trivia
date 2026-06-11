@@ -11,6 +11,7 @@ const defaultRoundCount = 10;
 const maximumRoundCount = 50;
 const roundDurationSeconds = 10;
 const revealDelayMilliseconds = 1800;
+const sseHeartbeatMilliseconds = 3000;
 const roomCodeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const countriesGeoJsonRoute = "/countries.geo.json";
 
@@ -319,6 +320,11 @@ const sendSseState = (client: RoomClient, room: MultiplayerRoom) => {
   client.response.write(
     `data: ${JSON.stringify(serializeRoom(room, client.playerId))}\n\n`,
   );
+};
+
+const sendSseHeartbeat = (response: ServerResponse) => {
+  response.write("event: heartbeat\n");
+  response.write(`data: ${Date.now()}\n\n`);
 };
 
 const updateConnectionFlags = (room: MultiplayerRoom) => {
@@ -813,8 +819,9 @@ const handleRoomEvents = (
 
   response.writeHead(200, {
     "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
+    "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
   });
   response.write("retry: 1000\n\n");
 
@@ -822,8 +829,8 @@ const handleRoomEvents = (
     playerId,
     response,
     heartbeat: setInterval(() => {
-      response.write(": ping\n\n");
-    }, 15000),
+      sendSseHeartbeat(response);
+    }, sseHeartbeatMilliseconds),
   };
 
   const clients = roomClients.get(room.code) ?? new Set<RoomClient>();

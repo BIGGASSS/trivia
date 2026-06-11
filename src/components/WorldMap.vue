@@ -9,6 +9,7 @@ type AnswerState = "idle" | "correct" | "incorrect";
 type GameMode = "solo" | "multiplayer";
 type GamePhase = "setup" | "playing" | "results";
 type MultiplayerSetupAction = "create" | "join";
+type RoomConnectionState = "connected" | "reconnecting" | "offline";
 
 interface MapPoint {
   x: number;
@@ -126,6 +127,10 @@ const minimumMultiplayerPlayerCount = 2;
 const defaultRoundCount = 10;
 const maximumRoundCount = 50;
 const roundDurationSeconds = 10;
+const roomConnectionStaleMilliseconds = 6500;
+const roomSyncIntervalMilliseconds = 2000;
+const roomReconnectCooldownMilliseconds = 4000;
+const roundDeadlineSyncGraceMilliseconds = 250;
 const countryGamePath = "/country-game";
 const soloGamePath = `${countryGamePath}/solo`;
 const multiplayerGamePath = `${countryGamePath}/multiplayer`;
@@ -143,6 +148,11 @@ const isMultiplayerBusy = ref(false);
 const isSubmittingAnswer = ref(false);
 const roomState = ref<MultiplayerRoomState | null>(null);
 const roomEvents = ref<EventSource | null>(null);
+const roomConnectionState = ref<RoomConnectionState>("connected");
+const lastRoomEventAt = ref(0);
+const lastRoomSyncAt = ref(0);
+const lastRoomReconnectAttemptAt = ref(0);
+const isRoomSyncInFlight = ref(false);
 const roundCountSetting = ref(defaultRoundCount);
 const totalRounds = ref(defaultRoundCount);
 const soloCurrentRound = ref(0);
@@ -174,6 +184,7 @@ const panStartScale = ref<MapPoint>({ x: 1, y: 1 });
 const hasDraggedMap = ref(false);
 const suppressNextCountryClick = ref(false);
 let isSyncingRoute = false;
+let roomSyncRequestId = 0;
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(Math.max(value, minimum), maximum);
@@ -288,6 +299,19 @@ const normalizedJoinRoomCode = computed(() =>
 );
 
 const isServerMultiplayerActive = computed(() => roomState.value !== null);
+const multiplayerConnectionMessage = computed(() => {
+  if (!roomState.value || roomConnectionState.value === "connected") {
+    return "";
+  }
+
+  if (roomConnectionState.value === "offline") {
+    return "You're offline. The room will resync automatically when the connection returns.";
+  }
+
+  return isRoomSyncInFlight.value
+    ? "Connection hiccup detected. Resyncing room state…"
+    : "Live room updates paused. Reconnecting automatically…";
+});
 const multiplayerSelf = computed(() => {
   const room = roomState.value;
 
@@ -423,6 +447,10 @@ const displayFeedbackMessage = computed(() => {
     return "Game over! Check the final leaderboard.";
   }
 
+  if (displayTimeLeft.value <= 0 && !room.roundLocked) {
+    return "Round ended. Syncing the reveal…";
+  }
+
   if (room.ownFeedback) {
     return room.ownFeedback.message;
   }
@@ -470,6 +498,7 @@ const isMapGuessingDisabled = computed(() => {
     return (
       roomState.value.status !== "playing" ||
       roomState.value.roundLocked ||
+      displayTimeLeft.value <= 0 ||
       (multiplayerSelf.value?.hasAnswered ?? false) ||
       isSubmittingAnswer.value
     );
@@ -762,6 +791,7 @@ function startSoloGame() {
 
   setGamePath(soloGamePath);
   closeRoomEvents();
+  resetRoomConnectionState();
   roomState.value = null;
   clearPendingRound();
   clearRoundTimer();
@@ -808,10 +838,26 @@ const requestJson = async <T,>(url: string, body?: Record<string, unknown>) => {
   return payload;
 };
 
+function markRoomConnectionAlive() {
+  lastRoomEventAt.value = Date.now();
+  lastRoomReconnectAttemptAt.value = 0;
+  roomConnectionState.value = "connected";
+}
+
+function resetRoomConnectionState() {
+  roomSyncRequestId += 1;
+  roomConnectionState.value = "connected";
+  lastRoomEventAt.value = 0;
+  lastRoomSyncAt.value = 0;
+  lastRoomReconnectAttemptAt.value = 0;
+  isRoomSyncInFlight.value = false;
+}
+
 function applyRoomState(
   room: MultiplayerRoomState,
   options: { replacePath?: boolean; updatePath?: boolean } = {},
 ) {
+  markRoomConnectionAlive();
   roomState.value = room;
   selectedMode.value = "multiplayer";
   totalRounds.value = room.roundCount;
@@ -846,28 +892,138 @@ function closeRoomEvents() {
 function connectRoomEvents(roomCode: string, playerId: string) {
   closeRoomEvents();
 
+  const normalizedRoomCode = normalizeRoomCode(roomCode);
   const source = new EventSource(
-    `/api/multiplayer/rooms/${encodeURIComponent(roomCode)}/events?playerId=${encodeURIComponent(playerId)}`,
+    `/api/multiplayer/rooms/${encodeURIComponent(normalizedRoomCode)}/events?playerId=${encodeURIComponent(playerId)}`,
   );
+
+  source.onopen = () => {
+    markRoomConnectionAlive();
+  };
 
   source.addEventListener("state", (event) => {
     const messageEvent = event as MessageEvent<string>;
     const nextRoomState = JSON.parse(messageEvent.data) as MultiplayerRoomState;
 
     now.value = Date.now();
+    markRoomConnectionAlive();
     applyRoomState(nextRoomState);
   });
 
+  source.addEventListener("heartbeat", () => {
+    markRoomConnectionAlive();
+  });
+
   source.onerror = () => {
-    multiplayerErrorMessage.value =
-      "Live room connection interrupted. Reconnecting…";
+    if (
+      roomState.value?.roomCode === normalizedRoomCode &&
+      roomState.value.playerId === playerId
+    ) {
+      roomConnectionState.value = navigator.onLine ? "reconnecting" : "offline";
+    }
   };
+
+  if (!lastRoomEventAt.value) {
+    lastRoomEventAt.value = Date.now();
+  }
 
   roomEvents.value = source;
 }
 
+async function syncCurrentRoomState() {
+  const room = roomState.value;
+
+  if (!room || isRoomSyncInFlight.value) {
+    return;
+  }
+
+  const roomCode = room.roomCode;
+  const playerId = room.playerId;
+  const syncRequestId = (roomSyncRequestId += 1);
+
+  isRoomSyncInFlight.value = true;
+  lastRoomSyncAt.value = Date.now();
+
+  try {
+    const response = await requestJson<MultiplayerApiResponse>(
+      `/api/multiplayer/rooms/${encodeURIComponent(roomCode)}?playerId=${encodeURIComponent(playerId)}`,
+    );
+
+    if (
+      roomState.value?.roomCode !== roomCode ||
+      roomState.value.playerId !== playerId
+    ) {
+      return;
+    }
+
+    applyRoomState(response.room);
+
+    if (!roomEvents.value || roomEvents.value.readyState === EventSource.CLOSED) {
+      connectRoomEvents(response.room.roomCode, response.room.playerId);
+    }
+  } catch {
+    if (
+      roomState.value?.roomCode === roomCode &&
+      roomState.value.playerId === playerId
+    ) {
+      roomConnectionState.value = navigator.onLine ? "reconnecting" : "offline";
+    }
+  } finally {
+    if (syncRequestId === roomSyncRequestId) {
+      isRoomSyncInFlight.value = false;
+    }
+  }
+}
+
+function checkRoomConnectionHealth() {
+  const room = roomState.value;
+
+  if (!room) {
+    return;
+  }
+
+  const currentTime = Date.now();
+
+  if (!navigator.onLine) {
+    roomConnectionState.value = "offline";
+    return;
+  }
+
+  if (!lastRoomEventAt.value) {
+    lastRoomEventAt.value = currentTime;
+  }
+
+  const isConnectionStale =
+    currentTime - lastRoomEventAt.value > roomConnectionStaleMilliseconds;
+  const shouldSyncExpiredRound =
+    room.status === "playing" &&
+    !room.roundLocked &&
+    room.roundEndsAt !== null &&
+    currentTime >= room.roundEndsAt + roundDeadlineSyncGraceMilliseconds;
+
+  if (isConnectionStale) {
+    roomConnectionState.value = "reconnecting";
+
+    if (
+      currentTime - lastRoomReconnectAttemptAt.value >
+      roomReconnectCooldownMilliseconds
+    ) {
+      lastRoomReconnectAttemptAt.value = currentTime;
+      connectRoomEvents(room.roomCode, room.playerId);
+    }
+  }
+
+  if (
+    (isConnectionStale || shouldSyncExpiredRound) &&
+    currentTime - lastRoomSyncAt.value > roomSyncIntervalMilliseconds
+  ) {
+    void syncCurrentRoomState();
+  }
+}
+
 function showJoinRoomFromPath(roomCode: string, message?: string) {
   closeRoomEvents();
+  resetRoomConnectionState();
   roomState.value = null;
   selectedMode.value = "multiplayer";
   multiplayerSetupAction.value = "join";
@@ -936,6 +1092,7 @@ async function syncRouteToState() {
 
     if (route.type === "solo") {
       closeRoomEvents();
+      resetRoomConnectionState();
       roomState.value = null;
       selectedMode.value = "solo";
       gamePhase.value = "setup";
@@ -950,6 +1107,7 @@ async function syncRouteToState() {
 
     if (route.type === "multiplayer-setup") {
       closeRoomEvents();
+      resetRoomConnectionState();
       roomState.value = null;
       selectedMode.value = "multiplayer";
       multiplayerSetupAction.value = "create";
@@ -959,6 +1117,7 @@ async function syncRouteToState() {
     }
 
     closeRoomEvents();
+    resetRoomConnectionState();
     roomState.value = null;
     gamePhase.value = "setup";
   } finally {
@@ -968,6 +1127,24 @@ async function syncRouteToState() {
 
 const handleBrowserPopState = () => {
   void syncRouteToState();
+};
+
+const handleBrowserOffline = () => {
+  if (roomState.value) {
+    roomConnectionState.value = "offline";
+  }
+};
+
+const handleBrowserOnline = () => {
+  const room = roomState.value;
+
+  if (!room) {
+    return;
+  }
+
+  roomConnectionState.value = "reconnecting";
+  connectRoomEvents(room.roomCode, room.playerId);
+  void syncCurrentRoomState();
 };
 
 async function createServerRoom() {
@@ -1097,6 +1274,7 @@ async function leaveServerRoom() {
   const room = roomState.value;
 
   closeRoomEvents();
+  resetRoomConnectionState();
   roomState.value = null;
   multiplayerErrorMessage.value = "";
   gamePhase.value = "setup";
@@ -1367,8 +1545,11 @@ onMounted(() => {
   void loadCountries();
   void syncRouteToState();
   window.addEventListener("popstate", handleBrowserPopState);
+  window.addEventListener("offline", handleBrowserOffline);
+  window.addEventListener("online", handleBrowserOnline);
   clockTimer.value = window.setInterval(() => {
     now.value = Date.now();
+    checkRoomConnectionHealth();
   }, 250);
 });
 
@@ -1377,7 +1558,10 @@ onUnmounted(() => {
   clearRoundTimer();
   clearClockTimer();
   closeRoomEvents();
+  resetRoomConnectionState();
   window.removeEventListener("popstate", handleBrowserPopState);
+  window.removeEventListener("offline", handleBrowserOffline);
+  window.removeEventListener("online", handleBrowserOnline);
 });
 </script>
 
@@ -1601,6 +1785,13 @@ onUnmounted(() => {
         <p v-if="multiplayerErrorMessage" class="server-error" role="alert">
           {{ multiplayerErrorMessage }}
         </p>
+        <p
+          v-if="multiplayerConnectionMessage"
+          class="server-warning"
+          role="status"
+        >
+          {{ multiplayerConnectionMessage }}
+        </p>
 
         <div class="setup-actions">
           <button
@@ -1676,6 +1867,13 @@ onUnmounted(() => {
             <p v-if="multiplayerErrorMessage" class="server-error" role="alert">
               {{ multiplayerErrorMessage }}
             </p>
+            <p
+              v-if="multiplayerConnectionMessage"
+              class="server-warning"
+              role="status"
+            >
+              {{ multiplayerConnectionMessage }}
+            </p>
           </div>
 
           <dl class="scoreboard" aria-label="Your score">
@@ -1711,6 +1909,15 @@ onUnmounted(() => {
               @click="resetGame"
             >
               Reset
+            </button>
+            <button
+              v-if="isServerMultiplayerActive"
+              class="secondary-button"
+              type="button"
+              :disabled="isRoomSyncInFlight"
+              @click="syncCurrentRoomState"
+            >
+              {{ isRoomSyncInFlight ? "Syncing…" : "Resync" }}
             </button>
             <button
               class="secondary-button"
@@ -1860,6 +2067,13 @@ onUnmounted(() => {
 
         <p v-if="multiplayerErrorMessage" class="server-error" role="alert">
           {{ multiplayerErrorMessage }}
+        </p>
+        <p
+          v-if="multiplayerConnectionMessage"
+          class="server-warning"
+          role="status"
+        >
+          {{ multiplayerConnectionMessage }}
         </p>
 
         <div class="results-actions">
@@ -2115,10 +2329,18 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.server-error {
+.server-error,
+.server-warning {
   margin: 0;
-  color: #b91c1c;
   font-weight: 800;
+}
+
+.server-error {
+  color: #b91c1c;
+}
+
+.server-warning {
+  color: #b45309;
 }
 
 .waiting-pill {
