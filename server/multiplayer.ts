@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 
@@ -11,6 +12,17 @@ const maximumRoundCount = 50;
 const roundDurationSeconds = 10;
 const revealDelayMilliseconds = 1800;
 const roomCodeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const countriesGeoJsonRoute = "/countries.geo.json";
+
+const expandHomeDirectory = (path: string) =>
+  path.replace(/^~(?=$|[\\/])/, homedir());
+
+const worldGeoJsonDirectory = resolve(
+  expandHomeDirectory(
+    process.env.WORLD_GEO_JSON_DIR ?? join(homedir(), "code", "world.geo.json"),
+  ),
+);
+const countriesGeoJsonPath = join(worldGeoJsonDirectory, "countries.geo.json");
 
 interface CountrySummary {
   id: string;
@@ -117,12 +129,11 @@ let countriesPromise: Promise<CountrySummary[]> | null = null;
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(Math.max(value, minimum), maximum);
 
+const readCountriesGeoJson = () => readFile(countriesGeoJsonPath, "utf8");
+
 const loadCountries = async () => {
   if (!countriesPromise) {
-    countriesPromise = readFile(
-      join(process.cwd(), "public", "countries.geo.json"),
-      "utf8",
-    ).then((contents) => {
+    countriesPromise = readCountriesGeoJson().then((contents) => {
       const data = JSON.parse(contents) as CountryFeatureCollection;
 
       return (data.features ?? [])
@@ -210,6 +221,35 @@ const sendError = (
   message: string,
 ) => {
   sendJson(response, statusCode, { error: message });
+};
+
+const handleCountriesGeoJsonMiddleware = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  next: () => void,
+) => {
+  const url = new URL(request.url ?? "/", "http://localhost");
+
+  if (request.method !== "GET" || url.pathname !== countriesGeoJsonRoute) {
+    next();
+    return;
+  }
+
+  void readCountriesGeoJson()
+    .then((contents) => {
+      response.writeHead(200, {
+        "Content-Type": "application/geo+json; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+      response.end(contents);
+    })
+    .catch((error) => {
+      sendError(
+        response,
+        500,
+        error instanceof Error ? error.message : "Could not load map data.",
+      );
+    });
 };
 
 const getRoom = (roomCode: string) => rooms.get(normalizeRoomCode(roomCode));
@@ -883,9 +923,18 @@ const handleMultiplayerMiddleware = (
 export const multiplayerPlugin = (): Plugin => ({
   name: "country-game-multiplayer-server",
   configureServer(server) {
+    server.middlewares.use(handleCountriesGeoJsonMiddleware);
     server.middlewares.use(handleMultiplayerMiddleware);
   },
   configurePreviewServer(server) {
+    server.middlewares.use(handleCountriesGeoJsonMiddleware);
     server.middlewares.use(handleMultiplayerMiddleware);
+  },
+  async generateBundle() {
+    this.emitFile({
+      type: "asset",
+      fileName: "countries.geo.json",
+      source: await readCountriesGeoJson(),
+    });
   },
 });
