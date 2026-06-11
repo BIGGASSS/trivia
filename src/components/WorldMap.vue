@@ -299,6 +299,11 @@ const normalizedJoinRoomCode = computed(() =>
 );
 
 const isServerMultiplayerActive = computed(() => roomState.value !== null);
+const isPlayingGame = computed(
+  () =>
+    roomState.value?.status === "playing" ||
+    (!roomState.value && gamePhase.value === "playing"),
+);
 const multiplayerConnectionMessage = computed(() => {
   if (!roomState.value || roomConnectionState.value === "connected") {
     return "";
@@ -1566,7 +1571,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="map-panel" aria-label="Country guessing minigame">
+  <section
+    class="map-panel"
+    :class="{ 'map-panel--playing': isPlayingGame }"
+    aria-label="Country guessing minigame"
+  >
     <div v-if="isLoading" class="map-message">Loading map…</div>
     <div v-else-if="errorMessage" class="map-message" role="alert">
       {{ errorMessage }}
@@ -1815,10 +1824,7 @@ onUnmounted(() => {
       </section>
 
       <template
-        v-else-if="
-          roomState?.status === 'playing' ||
-          (!roomState && gamePhase === 'playing')
-        "
+        v-else-if="isPlayingGame"
       >
         <header class="game-header">
           <div class="prompt-card" aria-live="polite">
@@ -2113,6 +2119,98 @@ onUnmounted(() => {
       rgba(226, 232, 240, 0.86)
     );
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.18);
+}
+
+.map-panel--playing {
+  display: grid;
+  width: min(100%, 1680px);
+  grid-template-columns: minmax(17rem, 23rem) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: clamp(0.6rem, 1.2vw, 1rem);
+  height: calc(100dvh - 5.25rem);
+  max-height: 52rem;
+  min-height: 30rem;
+  padding: clamp(0.6rem, 1.2vw, 1rem);
+  overflow: hidden;
+}
+
+.map-panel--playing .game-header {
+  display: flex;
+  grid-row: 1 / -1;
+  flex-direction: column;
+  gap: 0.7rem;
+  min-height: 0;
+  margin-bottom: 0;
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+
+.map-panel--playing .prompt-card,
+.map-panel--playing .scoreboard,
+.map-panel--playing .game-actions {
+  flex-shrink: 0;
+  padding: clamp(0.75rem, 1.2vw, 1rem);
+}
+
+.map-panel--playing .prompt-card {
+  flex: 1 1 auto;
+}
+
+.map-panel--playing h2 {
+  font-size: clamp(1.45rem, 2.2vw, 2.35rem);
+}
+
+.map-panel--playing .round-meta {
+  margin-top: 0.4rem;
+}
+
+.map-panel--playing .timer {
+  margin-top: 0.55rem;
+}
+
+.map-panel--playing .feedback {
+  min-height: 0;
+  margin-top: 0.45rem;
+}
+
+.map-panel--playing .scoreboard {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.map-panel--playing .scoreboard dd {
+  font-size: 1.35rem;
+}
+
+.map-panel--playing .game-actions {
+  flex-flow: row wrap;
+  justify-content: flex-start;
+}
+
+.map-panel--playing .player-strip {
+  grid-column: 2;
+  grid-row: 2;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0;
+}
+
+.map-panel--playing .map-stage {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #c7e8ff;
+}
+
+.map-panel--playing .world-map {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
 }
 
 .setup-panel,
@@ -2758,6 +2856,42 @@ button:disabled:focus-visible {
   place-items: center;
   color: #334155;
   font-size: clamp(1rem, 2vw, 1.25rem);
+}
+
+@media (max-width: 820px) {
+  .map-panel--playing {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(16rem, 1fr) auto;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .map-panel--playing .game-header,
+  .map-panel--playing .map-stage,
+  .map-panel--playing .player-strip {
+    grid-column: 1;
+  }
+
+  .map-panel--playing .game-header {
+    grid-row: 1;
+    overflow: visible;
+  }
+
+  .map-panel--playing .map-stage {
+    grid-row: 2;
+    min-height: min(52vw, 22rem);
+  }
+
+  .map-panel--playing .player-strip {
+    grid-row: 3;
+  }
+
+  .map-panel--playing .world-map {
+    height: auto;
+    aspect-ratio: 2 / 1;
+  }
 }
 
 @media (max-width: 980px) {

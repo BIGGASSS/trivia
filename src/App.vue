@@ -43,7 +43,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="app-shell">
+  <main
+    class="app-shell"
+    :class="{ 'app-shell--game': currentView === 'country-game' }"
+  >
     <section v-if="currentView === 'home'" class="home-page">
       <nav class="site-nav" aria-label="Main navigation">
         <a class="brand" href="#top" aria-label="World Trivia home">
@@ -497,6 +500,18 @@ button:focus-visible,
   gap: 1rem;
 }
 
+.app-shell--game {
+  min-height: 100dvh;
+  padding-block: clamp(0.5rem, 1.4vh, 1rem);
+}
+
+.app-shell--game .game-page {
+  width: min(100%, 1680px);
+  min-height: calc(100dvh - clamp(1rem, 2.8vh, 2rem));
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: clamp(0.5rem, 1vh, 0.75rem);
+}
+
 .back-button {
   justify-self: start;
   border: 1px solid rgba(71, 85, 105, 0.24);
@@ -504,6 +519,11 @@ button:focus-visible,
   color: #0f172a;
   background: rgba(255, 255, 255, 0.82);
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+}
+
+.app-shell--game .back-button {
+  padding: 0.62rem 0.95rem;
+  line-height: 1;
 }
 
 .back-button:hover,
