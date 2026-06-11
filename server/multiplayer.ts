@@ -35,6 +35,17 @@ interface CountryFeatureCollection {
 
 type RoomStatus = "lobby" | "playing" | "results";
 type AnswerState = "idle" | "correct" | "incorrect";
+type RoundPerformanceOutcome = "correct" | "incorrect" | "skipped" | "timeout";
+
+interface RoundPerformance {
+  round: number;
+  outcome: RoundPerformanceOutcome;
+}
+
+interface RoundCountry {
+  round: number;
+  countryName: string;
+}
 
 interface PlayerFeedback {
   state: AnswerState;
@@ -51,6 +62,7 @@ interface RoomPlayer {
   answeredThisRound: boolean;
   connected: boolean;
   lastFeedback: PlayerFeedback | null;
+  roundPerformance: RoundPerformance[];
 }
 
 interface MultiplayerRoom {
@@ -63,6 +75,7 @@ interface MultiplayerRoom {
   revealCountryId: string | null;
   roundEndsAt: number | null;
   players: RoomPlayer[];
+  roundCountries: RoundCountry[];
   usedCountryIds: Set<string>;
   roundTimer: ReturnType<typeof setTimeout> | null;
   nextRoundTimer: ReturnType<typeof setTimeout> | null;
@@ -79,6 +92,7 @@ interface PublicPlayer {
   isHost: boolean;
   connected: boolean;
   hasAnswered: boolean;
+  roundPerformance: RoundPerformance[];
 }
 
 interface PublicRoomState {
@@ -97,6 +111,7 @@ interface PublicRoomState {
   roundLocked: boolean;
   canStart: boolean;
   players: PublicPlayer[];
+  roundCountries: RoundCountry[];
   ownFeedback: PlayerFeedback | null;
 }
 
@@ -266,6 +281,51 @@ const clearRoomTimers = (room: MultiplayerRoom) => {
   }
 };
 
+const recordRoundPerformance = (
+  player: RoomPlayer,
+  round: number,
+  outcome: RoundPerformanceOutcome,
+) => {
+  player.roundPerformance ??= [];
+
+  const existingIndex = player.roundPerformance.findIndex(
+    (performance) => performance.round === round,
+  );
+  const roundPerformance = { round, outcome } satisfies RoundPerformance;
+
+  if (existingIndex >= 0) {
+    player.roundPerformance[existingIndex] = roundPerformance;
+    return;
+  }
+
+  player.roundPerformance.push(roundPerformance);
+  player.roundPerformance.sort(
+    (firstRound, secondRound) => firstRound.round - secondRound.round,
+  );
+};
+
+const recordRoundCountry = (room: MultiplayerRoom, country: CountrySummary) => {
+  room.roundCountries ??= [];
+
+  const existingIndex = room.roundCountries.findIndex(
+    (roundCountry) => roundCountry.round === room.currentRound,
+  );
+  const roundCountry = {
+    round: room.currentRound,
+    countryName: country.name,
+  } satisfies RoundCountry;
+
+  if (existingIndex >= 0) {
+    room.roundCountries[existingIndex] = roundCountry;
+    return;
+  }
+
+  room.roundCountries.push(roundCountry);
+  room.roundCountries.sort(
+    (firstRound, secondRound) => firstRound.round - secondRound.round,
+  );
+};
+
 const serializeRoom = (
   room: MultiplayerRoom,
   playerId: string,
@@ -293,6 +353,7 @@ const serializeRoom = (
     canStart:
       (room.status === "lobby" || room.status === "results") &&
       room.players.length >= minimumPlayerCount,
+    roundCountries: room.roundCountries ?? [],
     players: room.players.map((player) => ({
       id: player.id,
       name: player.name,
@@ -302,6 +363,7 @@ const serializeRoom = (
       isHost: player.id === room.hostId,
       connected: player.connected,
       hasAnswered: player.answeredThisRound,
+      roundPerformance: player.roundPerformance,
     })),
     ownFeedback: ownPlayer?.lastFeedback ?? null,
   };
@@ -394,6 +456,7 @@ async function startNextRound(room: MultiplayerRoom) {
   room.status = "playing";
   room.currentRound += 1;
   room.currentCountry = await chooseCountry(room);
+  recordRoundCountry(room, room.currentCountry);
   room.revealCountryId = null;
   room.roundEndsAt = Date.now() + roundDurationSeconds * 1000;
 
@@ -433,6 +496,7 @@ function finishRound(room: MultiplayerRoom) {
     player.attempts += 1;
     player.streak = 0;
     player.answeredThisRound = true;
+    recordRoundPerformance(player, room.currentRound, "timeout");
     player.lastFeedback = {
       state: "incorrect",
       message: `Time's up! The correct answer was ${room.currentCountry.name}.`,
@@ -459,6 +523,7 @@ const startRoom = async (room: MultiplayerRoom) => {
   room.currentCountry = null;
   room.revealCountryId = null;
   room.roundEndsAt = null;
+  room.roundCountries = [];
   room.usedCountryIds.clear();
 
   for (const player of room.players) {
@@ -467,6 +532,7 @@ const startRoom = async (room: MultiplayerRoom) => {
     player.streak = 0;
     player.answeredThisRound = false;
     player.lastFeedback = null;
+    player.roundPerformance = [];
   }
 
   await startNextRound(room);
@@ -486,6 +552,7 @@ const createRoom = async (body: RequestBody) => {
     currentCountry: null,
     revealCountryId: null,
     roundEndsAt: null,
+    roundCountries: [],
     players: [
       {
         id: hostId,
@@ -496,6 +563,7 @@ const createRoom = async (body: RequestBody) => {
         answeredThisRound: false,
         connected: false,
         lastFeedback: null,
+        roundPerformance: [],
       },
     ],
     usedCountryIds: new Set<string>(),
@@ -534,6 +602,7 @@ const joinRoom = (room: MultiplayerRoom, body: RequestBody) => {
     answeredThisRound: false,
     connected: false,
     lastFeedback: null,
+    roundPerformance: [],
   });
 
   broadcastRoom(room);
@@ -596,12 +665,18 @@ const submitAnswer = async (
   }
 
   const isCorrect = countryId === room.currentCountry.id;
+  const roundOutcome: RoundPerformanceOutcome = isCorrect
+    ? "correct"
+    : countryId === null
+      ? "skipped"
+      : "incorrect";
   const countries = await loadCountries();
   const selectedCountry = countries.find((country) => country.id === countryId);
   const selectedCountryName = selectedCountry?.name ?? "your selection";
 
   player.attempts += 1;
   player.answeredThisRound = true;
+  recordRoundPerformance(player, room.currentRound, roundOutcome);
 
   if (isCorrect) {
     player.score += 1;

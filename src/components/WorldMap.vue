@@ -10,10 +10,22 @@ type GameMode = "solo" | "multiplayer";
 type GamePhase = "setup" | "playing" | "results";
 type MultiplayerSetupAction = "create" | "join";
 type RoomConnectionState = "connected" | "reconnecting" | "offline";
+type RoundPerformanceOutcome = "correct" | "incorrect" | "skipped" | "timeout";
+type RoundPerformanceDisplayState = RoundPerformanceOutcome | "empty";
 
 interface MapPoint {
   x: number;
   y: number;
+}
+
+interface RoundPerformance {
+  round: number;
+  outcome: RoundPerformanceOutcome;
+}
+
+interface RoundCountry {
+  round: number;
+  countryName: string;
 }
 
 interface Player {
@@ -22,6 +34,7 @@ interface Player {
   score: number;
   attempts: number;
   streak: number;
+  roundPerformance: RoundPerformance[];
 }
 
 interface MultiplayerPlayer extends Player {
@@ -52,6 +65,7 @@ interface MultiplayerRoomState {
   roundLocked: boolean;
   canStart: boolean;
   players: MultiplayerPlayer[];
+  roundCountries?: RoundCountry[];
   ownFeedback: PlayerFeedback | null;
 }
 
@@ -156,12 +170,14 @@ const isRoomSyncInFlight = ref(false);
 const roundCountSetting = ref(defaultRoundCount);
 const totalRounds = ref(defaultRoundCount);
 const soloCurrentRound = ref(0);
+const soloRoundCountries = ref<RoundCountry[]>([]);
 const soloPlayer = ref<Player>({
   id: "solo-player",
   name: "Solo Player",
   score: 0,
   attempts: 0,
   streak: 0,
+  roundPerformance: [],
 });
 const soloTimeLeft = ref(roundDurationSeconds);
 const now = ref(Date.now());
@@ -546,6 +562,68 @@ const leaderboard = computed<LeaderboardPlayer[]>(() =>
     }),
 );
 
+const displayRoundCountries = computed(() =>
+  roomState.value
+    ? (roomState.value.roundCountries ?? [])
+    : soloRoundCountries.value,
+);
+
+const performanceColumns = computed(() =>
+  Array.from({ length: displayRoundCount.value }, (_, index) => {
+    const round = index + 1;
+    const roundCountry = displayRoundCountries.value.find(
+      (country) => country.round === round,
+    );
+    const countryName = roundCountry?.countryName ?? `Round ${round}`;
+
+    return {
+      round,
+      countryName,
+      ariaLabel: roundCountry
+        ? `Round ${round}: ${countryName}`
+        : `Round ${round}`,
+    };
+  }),
+);
+
+const roundPerformanceMeta: Record<
+  RoundPerformanceDisplayState,
+  { label: string; symbol: string }
+> = {
+  correct: { label: "Correct", symbol: "✓" },
+  incorrect: { label: "Wrong", symbol: "×" },
+  skipped: { label: "Skipped", symbol: "–" },
+  timeout: { label: "Timed out", symbol: "⏱" },
+  empty: { label: "No result", symbol: "·" },
+};
+
+const getRoundPerformance = (player: Player, round: number) => {
+  const outcome =
+    player.roundPerformance?.find((performance) => performance.round === round)
+      ?.outcome ?? "empty";
+  const meta = roundPerformanceMeta[outcome];
+
+  return {
+    ...meta,
+    outcome,
+    ariaLabel: `${player.name}, round ${round}: ${meta.label}`,
+  };
+};
+
+const getPlayerRoundGlintClass = (player: Player) => {
+  const outcome = player.roundPerformance?.find(
+    (performance) => performance.round === currentRoundNumber.value,
+  )?.outcome;
+
+  if (!outcome) {
+    return "";
+  }
+
+  return outcome === "correct"
+    ? "player-name-tag--correct-glint"
+    : "player-name-tag--incorrect-glint";
+};
+
 const mapViewBox = computed(() => {
   const width = mapBounds.width / zoomLevel.value;
   const height = mapBounds.height / zoomLevel.value;
@@ -677,6 +755,7 @@ function resetSoloPlayer() {
     score: 0,
     attempts: 0,
     streak: 0,
+    roundPerformance: [],
   };
 }
 
@@ -703,7 +782,49 @@ function scheduleNextSoloRound(delay: number) {
   }, delay);
 }
 
-function resolveSoloRound(isCorrect: boolean, feedback: string, delay: number) {
+function recordSoloRoundPerformance(outcome: RoundPerformanceOutcome) {
+  const existingIndex = soloPlayer.value.roundPerformance.findIndex(
+    (performance) => performance.round === soloCurrentRound.value,
+  );
+  const roundPerformance = {
+    round: soloCurrentRound.value,
+    outcome,
+  } satisfies RoundPerformance;
+
+  if (existingIndex >= 0) {
+    soloPlayer.value.roundPerformance[existingIndex] = roundPerformance;
+    return;
+  }
+
+  soloPlayer.value.roundPerformance.push(roundPerformance);
+}
+
+function recordSoloRoundCountry(round: number, country: CountryPath) {
+  const existingIndex = soloRoundCountries.value.findIndex(
+    (roundCountry) => roundCountry.round === round,
+  );
+  const roundCountry = {
+    round,
+    countryName: country.name,
+  } satisfies RoundCountry;
+
+  if (existingIndex >= 0) {
+    soloRoundCountries.value[existingIndex] = roundCountry;
+    return;
+  }
+
+  soloRoundCountries.value.push(roundCountry);
+  soloRoundCountries.value.sort(
+    (firstRound, secondRound) => firstRound.round - secondRound.round,
+  );
+}
+
+function resolveSoloRound(
+  isCorrect: boolean,
+  feedback: string,
+  delay: number,
+  outcome: RoundPerformanceOutcome = isCorrect ? "correct" : "incorrect",
+) {
   if (
     !currentCountry.value ||
     isRoundLocked.value ||
@@ -717,6 +838,7 @@ function resolveSoloRound(isCorrect: boolean, feedback: string, delay: number) {
   answerState.value = isCorrect ? "correct" : "incorrect";
   feedbackMessage.value = feedback;
   soloPlayer.value.attempts += 1;
+  recordSoloRoundPerformance(outcome);
 
   if (isCorrect) {
     soloPlayer.value.score += 1;
@@ -742,6 +864,7 @@ function handleSoloRoundTimeout() {
     false,
     `Time's up! The correct answer was ${currentCountry.value.name}.`,
     1400,
+    "timeout",
   );
 }
 
@@ -781,6 +904,7 @@ function startSoloRound() {
 
   soloCurrentRound.value += 1;
   currentCountry.value = country;
+  recordSoloRoundCountry(soloCurrentRound.value, country);
   answerState.value = "idle";
   lastSelectedCountryId.value = null;
   isRoundLocked.value = false;
@@ -803,6 +927,7 @@ function startSoloGame() {
   resetSoloPlayer();
   totalRounds.value = getConfiguredRoundCount();
   soloCurrentRound.value = 0;
+  soloRoundCountries.value = [];
   currentCountry.value = null;
   answerState.value = "idle";
   lastSelectedCountryId.value = null;
@@ -820,6 +945,7 @@ function resetSoloSetup() {
   clearRoundTimer();
   gamePhase.value = "setup";
   soloCurrentRound.value = 0;
+  soloRoundCountries.value = [];
   currentCountry.value = null;
   answerState.value = "idle";
   lastSelectedCountryId.value = null;
@@ -963,7 +1089,10 @@ async function syncCurrentRoomState() {
 
     applyRoomState(response.room);
 
-    if (!roomEvents.value || roomEvents.value.readyState === EventSource.CLOSED) {
+    if (
+      !roomEvents.value ||
+      roomEvents.value.readyState === EventSource.CLOSED
+    ) {
       connectRoomEvents(response.room.roomCode, response.room.playerId);
     }
   } catch {
@@ -1517,6 +1646,7 @@ const skipCountry = () => {
     false,
     `Skipped. The correct answer was ${currentCountry.value.name}.`,
     1200,
+    "skipped",
   );
 };
 
@@ -1823,9 +1953,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <template
-        v-else-if="isPlayingGame"
-      >
+      <template v-else-if="isPlayingGame">
         <header class="game-header">
           <div class="prompt-card" aria-live="polite">
             <p class="eyebrow">
@@ -1958,7 +2086,12 @@ onUnmounted(() => {
                     : "Guessing"
               }}
             </span>
-            <strong>{{ player.name }}</strong>
+            <strong
+              class="player-name-tag"
+              :class="getPlayerRoundGlintClass(player)"
+            >
+              {{ player.name }}
+            </strong>
             <span>{{ player.score }} pts</span>
           </article>
         </aside>
@@ -2070,6 +2203,98 @@ onUnmounted(() => {
             </span>
           </li>
         </ol>
+
+        <section
+          class="performance-chart"
+          aria-labelledby="performance-chart-heading"
+        >
+          <div class="performance-chart-header">
+            <div>
+              <p class="eyebrow">Round-by-round</p>
+              <h3 id="performance-chart-heading">Performance chart</h3>
+            </div>
+            <ul class="performance-legend" aria-label="Performance legend">
+              <li>
+                <span
+                  class="performance-legend-dot performance-cell--correct"
+                  aria-hidden="true"
+                ></span>
+                Correct
+              </li>
+              <li>
+                <span
+                  class="performance-legend-dot performance-cell--incorrect"
+                  aria-hidden="true"
+                ></span>
+                Wrong
+              </li>
+              <li>
+                <span
+                  class="performance-legend-dot performance-cell--skipped"
+                  aria-hidden="true"
+                ></span>
+                Skipped
+              </li>
+              <li>
+                <span
+                  class="performance-legend-dot performance-cell--timeout"
+                  aria-hidden="true"
+                ></span>
+                Timed out
+              </li>
+            </ul>
+          </div>
+
+          <div class="performance-table-wrap">
+            <table class="performance-table">
+              <caption class="sr-only">
+                Each player's result on every round.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Player</th>
+                  <th
+                    v-for="column in performanceColumns"
+                    :key="column.round"
+                    scope="col"
+                    :title="column.ariaLabel"
+                  >
+                    <span class="performance-country-label">
+                      {{ column.countryName }}
+                    </span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="player in leaderboard" :key="player.id">
+                  <th scope="row">
+                    <span class="performance-player-name">
+                      {{ player.name }}
+                    </span>
+                    <small>{{ player.score }}/{{ displayRoundCount }}</small>
+                  </th>
+                  <td
+                    v-for="column in performanceColumns"
+                    :key="`${player.id}-${column.round}`"
+                  >
+                    <span
+                      class="performance-cell"
+                      :class="`performance-cell--${getRoundPerformance(player, column.round).outcome}`"
+                      :title="
+                        getRoundPerformance(player, column.round).ariaLabel
+                      "
+                      :aria-label="
+                        getRoundPerformance(player, column.round).ariaLabel
+                      "
+                    >
+                      {{ getRoundPerformance(player, column.round).symbol }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         <p v-if="multiplayerErrorMessage" class="server-error" role="alert">
           {{ multiplayerErrorMessage }}
@@ -2231,6 +2456,7 @@ onUnmounted(() => {
 .player-name-field,
 .mode-card,
 .leaderboard-row,
+.performance-chart,
 .player-score-card,
 .room-code-card,
 .server-setup {
@@ -2244,6 +2470,7 @@ onUnmounted(() => {
 .lobby-header,
 .results-copy,
 .prompt-card,
+.performance-chart,
 .server-setup {
   padding: clamp(1rem, 2vw, 1.5rem);
 }
@@ -2662,6 +2889,81 @@ button:disabled:focus-visible {
   font-size: 1.05rem;
 }
 
+.player-name-tag {
+  position: relative;
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  margin-inline: -0.35rem;
+  padding: 0.08rem 0.35rem;
+  isolation: isolate;
+}
+
+.player-name-tag::after {
+  position: absolute;
+  inset: -45% auto -45% -80%;
+  width: 58%;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: skewX(-24deg);
+}
+
+.player-name-tag--correct-glint {
+  color: #14532d !important;
+  background: rgba(220, 252, 231, 0.78);
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.4),
+    0 0 18px rgba(34, 197, 94, 0.34);
+}
+
+.player-name-tag--incorrect-glint {
+  color: #7f1d1d !important;
+  background: rgba(254, 226, 226, 0.84);
+  box-shadow:
+    0 0 0 1px rgba(239, 68, 68, 0.4),
+    0 0 18px rgba(239, 68, 68, 0.34);
+}
+
+.player-name-tag--correct-glint::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(34, 197, 94, 0.95),
+    transparent
+  );
+  animation: player-name-glint 1.05s ease-out both;
+}
+
+.player-name-tag--incorrect-glint::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(239, 68, 68, 0.95),
+    transparent
+  );
+  animation: player-name-glint 1.05s ease-out both;
+}
+
+@keyframes player-name-glint {
+  0% {
+    opacity: 0;
+    transform: translateX(0) skewX(-24deg);
+  }
+
+  18% {
+    opacity: 0.95;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(360%) skewX(-24deg);
+  }
+}
+
 .player-score-card span:last-child {
   color: #475569;
   font-weight: 900;
@@ -2848,6 +3150,165 @@ button:disabled:focus-visible {
   font-size: 2rem;
   font-weight: 950;
   line-height: 1;
+}
+
+.performance-chart {
+  display: grid;
+  gap: 1rem;
+}
+
+.performance-chart-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.performance-chart h3 {
+  color: #0f172a;
+  font-size: clamp(1.35rem, 2.5vw, 2rem);
+  font-weight: 950;
+  line-height: 1;
+}
+
+.performance-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.85rem;
+  margin: 0;
+  padding: 0;
+  color: #475569;
+  font-size: 0.85rem;
+  font-weight: 900;
+  list-style: none;
+}
+
+.performance-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.performance-legend-dot {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.performance-table-wrap {
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.performance-table {
+  width: 100%;
+  min-width: 52rem;
+  border-collapse: separate;
+  border-spacing: 0.35rem;
+}
+
+.performance-table th,
+.performance-table td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.performance-table thead th {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.performance-table thead th:not(:first-child) {
+  min-width: 7rem;
+  max-width: 10rem;
+  color: #334155;
+  font-size: 0.78rem;
+  letter-spacing: 0;
+  line-height: 1.15;
+  text-transform: none;
+}
+
+.performance-country-label {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.performance-table tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: grid;
+  gap: 0.2rem;
+  min-width: 10rem;
+  border-radius: 12px;
+  padding: 0.65rem 0.8rem;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+  text-align: left;
+}
+
+.performance-player-name {
+  color: #0f172a;
+  font-weight: 950;
+}
+
+.performance-table tbody small {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.performance-cell {
+  display: inline-grid;
+  width: 2.15rem;
+  height: 2.15rem;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.performance-cell--correct {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.performance-cell--incorrect {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.performance-cell--skipped {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.performance-cell--timeout {
+  color: #475569;
+  background: #e2e8f0;
+}
+
+.performance-cell--empty {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .map-message {
