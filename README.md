@@ -1,54 +1,69 @@
-# trivia
+# World Trivia
 
-This template should help get you started developing with Vue 3 in Vite.
+World Trivia is a Vue/Vite geography trivia app. Players are prompted with a country name and must find it on an unlabeled, border-only world map.
 
-## Recommended IDE Setup
+## Features
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+- Landing page for the World Trivia game hub
+- Country guessing game with a pannable, zoomable SVG world map
+- Solo mode with timed rounds, score, streak, and accuracy tracking
+- Multiplayer rooms with shareable room codes, live room updates, and leaderboards
+- Server-sent events for multiplayer synchronization and reconnect handling
+- Configurable round count, up to 5 multiplayer players per room
 
-## Recommended Browser Setup
+## Tech stack
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+- Vue 3 + TypeScript
+- Vite
+- Custom Vite middleware in `server/multiplayer.ts` for multiplayer APIs
+- Bundled GeoJSON country borders from `public/countries.geo.json`
 
-## Type Support for `.vue` Imports in TS
+## Map data
 
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
+Country border data is bundled at `public/countries.geo.json`.
 
-## Customize configuration
+Vite serves that file at `/countries.geo.json` in development and copies it into `dist/` during production builds. The multiplayer middleware reads the same bundled file for country prompts, so there is no external dataset path or environment variable required.
 
-See [Vite Configuration Reference](https://vite.dev/config/).
+To refresh the map data, replace `public/countries.geo.json` with an updated GeoJSON feature collection.
 
-## Project Setup
+## Project setup
 
 ```sh
 pnpm install
 ```
 
-### Compile and Hot-Reload for Development
+## Development
 
 ```sh
 pnpm dev
 ```
 
-### Type-Check, Compile and Minify for Production
+The Vite dev server also provides:
+
+- `GET /countries.geo.json`
+- `POST /api/multiplayer/rooms`
+- `GET /api/multiplayer/rooms/:roomCode`
+- `GET /api/multiplayer/rooms/:roomCode/events`
+- `POST /api/multiplayer/rooms/:roomCode/join`
+- `POST /api/multiplayer/rooms/:roomCode/start`
+- `POST /api/multiplayer/rooms/:roomCode/guess`
+- `POST /api/multiplayer/rooms/:roomCode/skip`
+- `POST /api/multiplayer/rooms/:roomCode/leave`
+
+Multiplayer rooms are kept in memory, so restarting the server clears active rooms.
+
+## Build and checks
 
 ```sh
 pnpm build
-```
-
-### Run Unit Tests with [Vitest](https://vitest.dev/)
-
-```sh
 pnpm test:unit
-```
-
-### Lint with [ESLint](https://eslint.org/)
-
-```sh
 pnpm lint
 ```
+
+## App routes
+
+- `/` — homepage
+- `/country-game` — game setup
+- `/country-game/solo` — solo game
+- `/country-game/multiplayer` — create/join multiplayer setup
+- `/country-game/multiplayer/:roomCode` — multiplayer room

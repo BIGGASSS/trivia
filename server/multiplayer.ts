@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 
@@ -14,16 +13,9 @@ const revealDelayMilliseconds = 1800;
 const sseHeartbeatMilliseconds = 3000;
 const roomCodeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const countriesGeoJsonRoute = "/countries.geo.json";
-
-const expandHomeDirectory = (path: string) =>
-  path.replace(/^~(?=$|[\\/])/, homedir());
-
-const worldGeoJsonDirectory = resolve(
-  expandHomeDirectory(
-    process.env.WORLD_GEO_JSON_DIR ?? join(homedir(), "code", "world.geo.json"),
-  ),
+const countriesGeoJsonPath = fileURLToPath(
+  new URL("../public/countries.geo.json", import.meta.url),
 );
-const countriesGeoJsonPath = join(worldGeoJsonDirectory, "countries.geo.json");
 
 interface CountrySummary {
   id: string;
@@ -936,12 +928,5 @@ export const multiplayerPlugin = (): Plugin => ({
   configurePreviewServer(server) {
     server.middlewares.use(handleCountriesGeoJsonMiddleware);
     server.middlewares.use(handleMultiplayerMiddleware);
-  },
-  async generateBundle() {
-    this.emitFile({
-      type: "asset",
-      fileName: "countries.geo.json",
-      source: await readCountriesGeoJson(),
-    });
   },
 });
