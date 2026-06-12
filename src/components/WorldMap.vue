@@ -18,6 +18,13 @@ interface MapPoint {
   y: number;
 }
 
+interface PinchGestureStart {
+  distance: number;
+  zoom: number;
+  focalPoint: MapPoint;
+  centerClient: MapPoint;
+}
+
 interface RoundPerformance {
   round: number;
   outcome: RoundPerformanceOutcome;
@@ -133,7 +140,7 @@ const mapBounds = {
   height: 180,
 };
 const minimumMapZoom = 1;
-const maximumMapZoom = 8;
+const maximumMapZoom = 32;
 const zoomStep = 1.35;
 const dragClickThreshold = 4;
 const maximumPlayerCount = 5;
@@ -197,8 +204,12 @@ const isPanning = ref(false);
 const panStartClient = ref<MapPoint | null>(null);
 const panStartCenter = ref<MapPoint>({ x: 0, y: 0 });
 const panStartScale = ref<MapPoint>({ x: 1, y: 1 });
+const isPinchingMap = ref(false);
+const pinchStart = ref<PinchGestureStart | null>(null);
 const hasDraggedMap = ref(false);
 const suppressNextCountryClick = ref(false);
+const activeMapPointers = new Map<number, MapPoint>();
+const pointerCaptureElements = new Map<number, Element>();
 let isSyncingRoute = false;
 let roomSyncRequestId = 0;
 
@@ -1463,7 +1474,7 @@ const loadCountries = async () => {
   }
 };
 
-const getSvgPoint = (event: PointerEvent | WheelEvent) => {
+const getSvgPointFromClient = (clientPoint: MapPoint) => {
   const svg = mapSvg.value;
 
   if (!svg) {
@@ -1477,14 +1488,36 @@ const getSvgPoint = (event: PointerEvent | WheelEvent) => {
   }
 
   const point = svg.createSVGPoint();
-  point.x = event.clientX;
-  point.y = event.clientY;
+  point.x = clientPoint.x;
+  point.y = clientPoint.y;
 
   const transformedPoint = point.matrixTransform(transformMatrix.inverse());
 
   return {
     x: transformedPoint.x,
     y: transformedPoint.y,
+  };
+};
+
+const getSvgPoint = (event: PointerEvent | WheelEvent) =>
+  getSvgPointFromClient({ x: event.clientX, y: event.clientY });
+
+const getClientPointRatio = (clientPoint: MapPoint) => {
+  const svg = mapSvg.value;
+
+  if (!svg) {
+    return null;
+  }
+
+  const bounds = svg.getBoundingClientRect();
+
+  if (!bounds.width || !bounds.height) {
+    return null;
+  }
+
+  return {
+    x: clamp((clientPoint.x - bounds.left) / bounds.width, 0, 1),
+    y: clamp((clientPoint.y - bounds.top) / bounds.height, 0, 1),
   };
 };
 
@@ -1516,6 +1549,31 @@ const setZoom = (nextZoom: number, focalPoint?: MapPoint) => {
   mapCenter.value = getClampedCenter(nextCenter, clampedZoom);
 };
 
+const setZoomFromClientAnchor = (
+  nextZoom: number,
+  focalPoint: MapPoint,
+  clientPoint: MapPoint,
+) => {
+  const clampedZoom = clamp(nextZoom, minimumMapZoom, maximumMapZoom);
+  const clientRatio = getClientPointRatio(clientPoint);
+
+  if (!clientRatio) {
+    setZoom(clampedZoom, focalPoint);
+    return;
+  }
+
+  const nextSize = getViewBoxSize(clampedZoom);
+
+  zoomLevel.value = clampedZoom;
+  mapCenter.value = getClampedCenter(
+    {
+      x: focalPoint.x + (0.5 - clientRatio.x) * nextSize.width,
+      y: focalPoint.y + (0.5 - clientRatio.y) * nextSize.height,
+    },
+    clampedZoom,
+  );
+};
+
 const zoomIn = () => {
   setZoom(zoomLevel.value * zoomStep);
 };
@@ -1536,8 +1594,165 @@ const handleMapWheel = (event: WheelEvent) => {
   setZoom(zoomLevel.value * zoomFactor, focalPoint ?? undefined);
 };
 
+const getPointerDistance = (firstPointer: MapPoint, secondPointer: MapPoint) =>
+  Math.hypot(firstPointer.x - secondPointer.x, firstPointer.y - secondPointer.y);
+
+const getPointerMidpoint = (firstPointer: MapPoint, secondPointer: MapPoint) => ({
+  x: (firstPointer.x + secondPointer.x) / 2,
+  y: (firstPointer.y + secondPointer.y) / 2,
+});
+
+const getActiveMapPointerPair = (): [MapPoint, MapPoint] | null => {
+  const [firstPointer, secondPointer] = Array.from(activeMapPointers.values());
+
+  if (!firstPointer || !secondPointer) {
+    return null;
+  }
+
+  return [firstPointer, secondPointer];
+};
+
+const captureMapPointer = (event: PointerEvent) => {
+  const captureTarget =
+    event.target instanceof Element ? event.target : mapSvg.value;
+
+  if (!captureTarget) {
+    return;
+  }
+
+  try {
+    captureTarget.setPointerCapture(event.pointerId);
+    pointerCaptureElements.set(event.pointerId, captureTarget);
+  } catch {
+    // Some browsers can throw if capture is requested after cancellation.
+  }
+};
+
+const releaseMapPointer = (event: PointerEvent) => {
+  const captureTarget = pointerCaptureElements.get(event.pointerId);
+
+  try {
+    captureTarget?.releasePointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture may already be released by the browser.
+  } finally {
+    pointerCaptureElements.delete(event.pointerId);
+  }
+};
+
+const startPanningFromPoint = (
+  clientPoint: MapPoint,
+  preserveDragState = false,
+) => {
+  const svg = mapSvg.value;
+
+  if (!svg) {
+    return;
+  }
+
+  const bounds = svg.getBoundingClientRect();
+
+  if (!bounds.width || !bounds.height) {
+    return;
+  }
+
+  const { width, height } = getViewBoxSize(zoomLevel.value);
+
+  isPanning.value = true;
+  isPinchingMap.value = false;
+  pinchStart.value = null;
+
+  if (!preserveDragState) {
+    hasDraggedMap.value = false;
+  }
+
+  panStartClient.value = { ...clientPoint };
+  panStartCenter.value = { ...mapCenter.value };
+  panStartScale.value = {
+    x: width / bounds.width,
+    y: height / bounds.height,
+  };
+};
+
+const beginPinchGesture = () => {
+  const pointerPair = getActiveMapPointerPair();
+
+  if (!pointerPair) {
+    return;
+  }
+
+  const [firstPointer, secondPointer] = pointerPair;
+  const centerClient = getPointerMidpoint(firstPointer, secondPointer);
+  const focalPoint = getSvgPointFromClient(centerClient);
+
+  if (!focalPoint) {
+    return;
+  }
+
+  isPanning.value = false;
+  isPinchingMap.value = true;
+  hasDraggedMap.value = true;
+  panStartClient.value = null;
+  pinchStart.value = {
+    distance: Math.max(getPointerDistance(firstPointer, secondPointer), 1),
+    zoom: zoomLevel.value,
+    focalPoint,
+    centerClient,
+  };
+};
+
+const updatePinchGesture = () => {
+  const gesture = pinchStart.value;
+  const pointerPair = getActiveMapPointerPair();
+
+  if (!gesture || !pointerPair) {
+    return;
+  }
+
+  const [firstPointer, secondPointer] = pointerPair;
+  const currentDistance = Math.max(
+    getPointerDistance(firstPointer, secondPointer),
+    1,
+  );
+  const currentCenter = getPointerMidpoint(firstPointer, secondPointer);
+  const centerDelta = getPointerDistance(currentCenter, gesture.centerClient);
+
+  if (
+    Math.abs(currentDistance - gesture.distance) > dragClickThreshold ||
+    centerDelta > dragClickThreshold
+  ) {
+    hasDraggedMap.value = true;
+  }
+
+  setZoomFromClientAnchor(
+    gesture.zoom * (currentDistance / gesture.distance),
+    gesture.focalPoint,
+    currentCenter,
+  );
+};
+
+const suppressCountryClickAfterMapGesture = () => {
+  suppressNextCountryClick.value = true;
+  window.setTimeout(() => {
+    suppressNextCountryClick.value = false;
+  }, 0);
+};
+
+const stopMapInteraction = () => {
+  if (hasDraggedMap.value) {
+    suppressCountryClickAfterMapGesture();
+  }
+
+  isPanning.value = false;
+  isPinchingMap.value = false;
+  panStartClient.value = null;
+  pinchStart.value = null;
+  activeMapPointers.clear();
+  pointerCaptureElements.clear();
+};
+
 const handleMapPointerDown = (event: PointerEvent) => {
-  if (event.button !== 0) {
+  if (event.pointerType === "mouse" && event.button !== 0) {
     return;
   }
 
@@ -1547,20 +1762,37 @@ const handleMapPointerDown = (event: PointerEvent) => {
     return;
   }
 
-  const bounds = svg.getBoundingClientRect();
-  const { width, height } = getViewBoxSize(zoomLevel.value);
+  const clientPoint = { x: event.clientX, y: event.clientY };
 
-  isPanning.value = true;
-  hasDraggedMap.value = false;
-  panStartClient.value = { x: event.clientX, y: event.clientY };
-  panStartCenter.value = { ...mapCenter.value };
-  panStartScale.value = {
-    x: width / bounds.width,
-    y: height / bounds.height,
-  };
+  captureMapPointer(event);
+  activeMapPointers.set(event.pointerId, clientPoint);
+
+  if (activeMapPointers.size >= 2) {
+    beginPinchGesture();
+    return;
+  }
+
+  startPanningFromPoint(clientPoint);
 };
 
 const handleMapPointerMove = (event: PointerEvent) => {
+  if (!activeMapPointers.has(event.pointerId)) {
+    return;
+  }
+
+  const clientPoint = { x: event.clientX, y: event.clientY };
+
+  activeMapPointers.set(event.pointerId, clientPoint);
+
+  if (activeMapPointers.size >= 2) {
+    if (!isPinchingMap.value) {
+      beginPinchGesture();
+    }
+
+    updatePinchGesture();
+    return;
+  }
+
   if (!isPanning.value || !panStartClient.value) {
     return;
   }
@@ -1578,20 +1810,27 @@ const handleMapPointerMove = (event: PointerEvent) => {
   });
 };
 
-const stopPanning = () => {
-  if (!isPanning.value) {
+const handleMapPointerEnd = (event: PointerEvent) => {
+  activeMapPointers.delete(event.pointerId);
+  releaseMapPointer(event);
+
+  if (isPinchingMap.value && activeMapPointers.size >= 2) {
+    beginPinchGesture();
     return;
   }
 
-  if (hasDraggedMap.value) {
-    suppressNextCountryClick.value = true;
-    window.setTimeout(() => {
-      suppressNextCountryClick.value = false;
-    }, 0);
+  if (isPinchingMap.value && activeMapPointers.size === 1) {
+    const [remainingPointer] = Array.from(activeMapPointers.values());
+
+    if (remainingPointer) {
+      startPanningFromPoint(remainingPointer, true);
+      return;
+    }
   }
 
-  isPanning.value = false;
-  panStartClient.value = null;
+  if (activeMapPointers.size === 0) {
+    stopMapInteraction();
+  }
 };
 
 const handleCountryGuess = (country: CountryPath) => {
@@ -1694,6 +1933,8 @@ onUnmounted(() => {
   clearClockTimer();
   closeRoomEvents();
   resetRoomConnectionState();
+  activeMapPointers.clear();
+  pointerCaptureElements.clear();
   window.removeEventListener("popstate", handleBrowserPopState);
   window.removeEventListener("offline", handleBrowserOffline);
   window.removeEventListener("online", handleBrowserOnline);
@@ -2122,18 +2363,23 @@ onUnmounted(() => {
             </button>
           </div>
 
+          <p class="map-touch-hint" aria-hidden="true">
+            Pinch to zoom · Drag to move
+          </p>
+
           <svg
             ref="mapSvg"
             class="world-map"
-            :class="{ 'world-map--panning': isPanning }"
+            :class="{ 'world-map--panning': isPanning || isPinchingMap }"
             :viewBox="mapViewBox"
+            preserveAspectRatio="xMidYMid meet"
             role="img"
-            aria-label="World map. Click the country named in the prompt. Use the zoom controls, mouse wheel, or drag to move around the map."
+            aria-label="World map. Click the country named in the prompt. Use the zoom controls, mouse wheel, two-finger pinch, or drag to move around the map."
             @wheel.prevent="handleMapWheel"
             @pointerdown="handleMapPointerDown"
             @pointermove.prevent="handleMapPointerMove"
-            @pointerup="stopPanning"
-            @pointercancel="stopPanning"
+            @pointerup="handleMapPointerEnd"
+            @pointercancel="handleMapPointerEnd"
           >
             <rect class="ocean" x="-180" y="-90" width="360" height="180" />
 
@@ -2422,6 +2668,7 @@ onUnmounted(() => {
 }
 
 .map-panel--playing .map-stage {
+  position: relative;
   display: grid;
   grid-column: 2;
   grid-row: 1;
@@ -2430,6 +2677,9 @@ onUnmounted(() => {
   overflow: hidden;
   border-radius: 18px;
   background: #c7e8ff;
+  isolation: isolate;
+  overscroll-behavior: contain;
+  touch-action: none;
 }
 
 .map-panel--playing .world-map {
@@ -3000,7 +3250,7 @@ button:disabled:focus-visible {
 }
 
 .zoom-level {
-  min-width: 3.5rem;
+  min-width: 4rem;
   color: #0f172a;
   font-size: 0.85rem;
   font-weight: 900;
@@ -3017,6 +3267,27 @@ button:disabled:focus-visible {
 .zoom-reset:hover,
 .zoom-reset:focus-visible {
   background: #cbd5e1;
+}
+
+.map-touch-hint {
+  position: absolute;
+  right: clamp(0.6rem, 1.6vw, 1rem);
+  bottom: clamp(0.6rem, 1.6vw, 1rem);
+  z-index: 2;
+  display: none;
+  max-width: calc(100% - 1.2rem);
+  margin: 0;
+  border: 1px solid rgba(71, 85, 105, 0.18);
+  border-radius: 999px;
+  padding: 0.45rem 0.7rem;
+  color: #1e293b;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: none;
+  backdrop-filter: blur(14px);
 }
 
 .world-map {
@@ -3319,14 +3590,21 @@ button:disabled:focus-visible {
   font-size: clamp(1rem, 2vw, 1.25rem);
 }
 
+@media (hover: none), (pointer: coarse) {
+  .map-touch-hint {
+    display: inline-flex;
+  }
+}
+
 @media (max-width: 820px) {
   .map-panel--playing {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(16rem, 1fr) auto;
+    grid-template-rows: auto auto auto;
     height: auto;
     max-height: none;
     min-height: 0;
     overflow: visible;
+    padding: clamp(0.5rem, 2.5vw, 0.85rem);
   }
 
   .map-panel--playing .game-header,
@@ -3342,7 +3620,10 @@ button:disabled:focus-visible {
 
   .map-panel--playing .map-stage {
     grid-row: 2;
-    min-height: min(52vw, 22rem);
+    width: 100%;
+    min-height: clamp(13rem, 58vw, 24rem);
+    max-height: min(62dvh, 28rem);
+    aspect-ratio: 2 / 1;
   }
 
   .map-panel--playing .player-strip {
@@ -3350,8 +3631,9 @@ button:disabled:focus-visible {
   }
 
   .map-panel--playing .world-map {
-    height: auto;
-    aspect-ratio: 2 / 1;
+    height: 100%;
+    min-height: inherit;
+    aspect-ratio: auto;
   }
 }
 
@@ -3384,16 +3666,66 @@ button:disabled:focus-visible {
 }
 
 @media (max-width: 560px) {
+  .map-panel {
+    border-radius: 18px;
+  }
+
+  .map-panel--playing .prompt-card,
+  .map-panel--playing .scoreboard,
+  .map-panel--playing .game-actions,
+  .player-score-card {
+    padding: 0.7rem;
+  }
+
+  .map-panel--playing h2 {
+    font-size: 1.25rem;
+  }
+
+  .map-panel--playing .scoreboard {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .map-panel--playing .scoreboard dt {
+    font-size: 0.62rem;
+  }
+
+  .map-panel--playing .scoreboard dd {
+    font-size: 1.05rem;
+  }
+
+  .map-panel--playing .game-actions button {
+    flex: 1 1 auto;
+    padding: 0.65rem 0.75rem;
+  }
+
   .zoom-controls {
     right: 0.55rem;
     left: 0.55rem;
     justify-content: center;
+    gap: 0.35rem;
     border-radius: 18px;
+    padding: 0.35rem;
+  }
+
+  .zoom-button {
+    width: 2.1rem;
+    height: 2.1rem;
+  }
+
+  .zoom-level {
+    min-width: 3.75rem;
   }
 
   .zoom-reset {
     padding-right: 0.7rem;
     padding-left: 0.7rem;
+  }
+
+  .map-touch-hint {
+    right: 0.55rem;
+    bottom: 0.55rem;
+    font-size: 0.72rem;
   }
 
   .leaderboard-row {
