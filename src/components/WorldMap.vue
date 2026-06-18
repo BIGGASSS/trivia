@@ -93,7 +93,7 @@ type CountryGeometry =
 
 interface CountryFeature {
   type: "Feature";
-  id?: string;
+  id?: string | number;
   properties?: {
     name?: string;
   };
@@ -102,7 +102,7 @@ interface CountryFeature {
 
 interface CountryFeatureCollection {
   type: "FeatureCollection";
-  features: CountryFeature[];
+  features?: CountryFeature[];
 }
 
 interface CountryPath {
@@ -146,7 +146,6 @@ const dragClickThreshold = 4;
 const maximumPlayerCount = 5;
 const minimumMultiplayerPlayerCount = 2;
 const defaultRoundCount = 10;
-const maximumRoundCount = 50;
 const roundDurationSeconds = 10;
 const roomConnectionStaleMilliseconds = 6500;
 const roomSyncIntervalMilliseconds = 2000;
@@ -158,6 +157,7 @@ const multiplayerGamePath = `${countryGamePath}/multiplayer`;
 const multiplayerSessionStorageKey = "world-trivia.multiplayer-sessions";
 
 const countries = ref<CountryPath[]>([]);
+const maximumRoundCount = computed(() => Math.max(1, countries.value.length));
 const currentCountry = ref<CountryPath | null>(null);
 const selectedMode = ref<GameMode>("multiplayer");
 const gamePhase = ref<GamePhase>("setup");
@@ -178,6 +178,7 @@ const roundCountSetting = ref(defaultRoundCount);
 const totalRounds = ref(defaultRoundCount);
 const soloCurrentRound = ref(0);
 const soloRoundCountries = ref<RoundCountry[]>([]);
+const soloUsedCountryIds = ref<Set<string>>(new Set());
 const soloPlayer = ref<Player>({
   id: "solo-player",
   name: "Solo Player",
@@ -735,12 +736,27 @@ function clearClockTimer() {
 }
 
 const getRandomCountry = (excludedCountryId?: string) => {
-  const choices = excludedCountryId
-    ? countries.value.filter((country) => country.id !== excludedCountryId)
-    : countries.value;
-  const availableChoices = choices.length > 0 ? choices : countries.value;
+  let availableChoices = countries.value.filter(
+    (country) => !soloUsedCountryIds.value.has(country.id),
+  );
+
+  if (availableChoices.length === 0) {
+    soloUsedCountryIds.value = new Set();
+    availableChoices = excludedCountryId
+      ? countries.value.filter((country) => country.id !== excludedCountryId)
+      : countries.value;
+  }
+
+  if (availableChoices.length === 0) {
+    availableChoices = countries.value;
+  }
+
   const randomIndex = Math.floor(Math.random() * availableChoices.length);
   const country = availableChoices[randomIndex];
+
+  if (country) {
+    soloUsedCountryIds.value.add(country.id);
+  }
 
   return country ?? null;
 };
@@ -751,7 +767,7 @@ const getConfiguredRoundCount = () => {
   const clampedRoundCount = clamp(
     Math.round(numericRoundCount),
     1,
-    maximumRoundCount,
+    maximumRoundCount.value,
   );
 
   roundCountSetting.value = clampedRoundCount;
@@ -939,6 +955,7 @@ function startSoloGame() {
   totalRounds.value = getConfiguredRoundCount();
   soloCurrentRound.value = 0;
   soloRoundCountries.value = [];
+  soloUsedCountryIds.value = new Set();
   currentCountry.value = null;
   answerState.value = "idle";
   lastSelectedCountryId.value = null;
@@ -957,6 +974,7 @@ function resetSoloSetup() {
   gamePhase.value = "setup";
   soloCurrentRound.value = 0;
   soloRoundCountries.value = [];
+  soloUsedCountryIds.value = new Set();
   currentCountry.value = null;
   answerState.value = "idle";
   lastSelectedCountryId.value = null;
@@ -1452,20 +1470,34 @@ const loadCountries = async () => {
     }
 
     const data = (await response.json()) as CountryFeatureCollection;
+    const features = data.features ?? [];
+    const loadedCountries = features.map((feature, index) => {
+      const rawName = feature.properties?.name?.trim();
+      const name = rawName || `Country ${index + 1}`;
+      const rawId =
+        feature.id === undefined || feature.id === null
+          ? name
+          : String(feature.id).trim();
+      const id = `${index}-${rawId || name}`;
+      const path = geometryToPath(feature.geometry);
 
-    countries.value = data.features
-      .map((feature, index) => {
-        const name = feature.properties?.name ?? `Country ${index + 1}`;
-        const id = feature.id ?? name;
-        const path = geometryToPath(feature.geometry);
+      return { id, name, path };
+    });
+    const countriesWithoutGeometry = loadedCountries.filter(
+      (country) => country.path.length === 0,
+    );
 
-        return { id, name, path };
-      })
-      .filter((country) => country.path.length > 0);
-
-    if (countries.value.length === 0) {
-      throw new Error("No playable countries were found in the map data.");
+    if (loadedCountries.length === 0) {
+      throw new Error("No country data was found in the map data.");
     }
+
+    if (countriesWithoutGeometry.length > 0) {
+      throw new Error(
+        `${countriesWithoutGeometry.length} countries are missing playable map geometry.`,
+      );
+    }
+
+    countries.value = loadedCountries;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "Could not load the map.";
@@ -1595,9 +1627,15 @@ const handleMapWheel = (event: WheelEvent) => {
 };
 
 const getPointerDistance = (firstPointer: MapPoint, secondPointer: MapPoint) =>
-  Math.hypot(firstPointer.x - secondPointer.x, firstPointer.y - secondPointer.y);
+  Math.hypot(
+    firstPointer.x - secondPointer.x,
+    firstPointer.y - secondPointer.y,
+  );
 
-const getPointerMidpoint = (firstPointer: MapPoint, secondPointer: MapPoint) => ({
+const getPointerMidpoint = (
+  firstPointer: MapPoint,
+  secondPointer: MapPoint,
+) => ({
   x: (firstPointer.x + secondPointer.x) / 2,
   y: (firstPointer.y + secondPointer.y) / 2,
 });
@@ -2004,7 +2042,10 @@ onUnmounted(() => {
               :max="maximumRoundCount"
               inputmode="numeric"
             />
-            <small>Default is {{ defaultRoundCount }} rounds.</small>
+            <small>
+              Default is {{ defaultRoundCount }} rounds; choose up to
+              {{ maximumRoundCount }} to include every loaded country.
+            </small>
           </label>
 
           <div class="setting-field setting-field--static">

@@ -9,7 +9,7 @@ World Trivia is a Vue/Vite geography trivia app. Players are prompted with a cou
 - Solo mode with timed rounds, score, streak, and accuracy tracking
 - Multiplayer rooms with shareable room codes, live room updates, and leaderboards
 - Server-sent events for multiplayer synchronization and reconnect handling
-- Configurable round count, up to 5 multiplayer players per room
+- Configurable round count, up to the loaded country count, and up to 5 multiplayer players per room
 
 ## Tech stack
 
@@ -22,7 +22,7 @@ World Trivia is a Vue/Vite geography trivia app. Players are prompted with a cou
 
 Country border data is bundled at `public/countries.geo.json`.
 
-Vite serves that file at `/countries.geo.json` in development and copies it into `dist/` during production builds. The multiplayer middleware reads the same bundled file for country prompts, so there is no external dataset path or environment variable required.
+Vite serves that file at `/countries.geo.json` in development and copies it into `dist/` during production builds. The multiplayer middleware reads the same bundled file for country prompts. Every named feature in the GeoJSON must include playable Polygon or MultiPolygon geometry so the full data set is visible and guessable in-game.
 
 To refresh the map data, replace `public/countries.geo.json` with an updated GeoJSON feature collection.
 

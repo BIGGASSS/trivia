@@ -7,7 +7,6 @@ import type { Plugin } from "vite";
 const maximumPlayerCount = 5;
 const minimumPlayerCount = 2;
 const defaultRoundCount = 10;
-const maximumRoundCount = 50;
 const roundDurationSeconds = 10;
 const revealDelayMilliseconds = 1800;
 const sseHeartbeatMilliseconds = 3000;
@@ -144,14 +143,17 @@ const loadCountries = async () => {
     countriesPromise = readCountriesGeoJson().then((contents) => {
       const data = JSON.parse(contents) as CountryFeatureCollection;
 
-      return (data.features ?? [])
-        .map((feature, index) => {
-          const name = feature.properties?.name ?? `Country ${index + 1}`;
-          const id = String(feature.id ?? name);
+      return (data.features ?? []).map((feature, index) => {
+        const rawName = feature.properties?.name?.trim();
+        const name = rawName || `Country ${index + 1}`;
+        const rawId =
+          feature.id === undefined || feature.id === null
+            ? name
+            : String(feature.id).trim();
+        const id = `${index}-${rawId || name}`;
 
-          return { id, name };
-        })
-        .filter((country) => country.name.trim().length > 0);
+        return { id, name };
+      });
     });
   }
 
@@ -188,8 +190,9 @@ const generateRoomCode = () => {
   return code;
 };
 
-const parseRoundCount = (rounds: unknown) => {
+const parseRoundCount = (rounds: unknown, countryCount: number) => {
   const numericRoundCount = Number(rounds) || defaultRoundCount;
+  const maximumRoundCount = Math.max(1, countryCount);
 
   return clamp(Math.round(numericRoundCount), 1, maximumRoundCount);
 };
@@ -539,7 +542,7 @@ const startRoom = async (room: MultiplayerRoom) => {
 };
 
 const createRoom = async (body: RequestBody) => {
-  await loadCountries();
+  const countries = await loadCountries();
 
   const hostName = sanitizePlayerName(body.playerName, "Host");
   const hostId = randomUUID();
@@ -547,7 +550,7 @@ const createRoom = async (body: RequestBody) => {
     code: generateRoomCode(),
     hostId,
     status: "lobby",
-    roundCount: parseRoundCount(body.rounds),
+    roundCount: parseRoundCount(body.rounds, countries.length),
     currentRound: 0,
     currentCountry: null,
     revealCountryId: null,
