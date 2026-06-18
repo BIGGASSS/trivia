@@ -11,9 +11,9 @@ const roundDurationSeconds = 10;
 const revealDelayMilliseconds = 1800;
 const sseHeartbeatMilliseconds = 3000;
 const roomCodeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const countriesGeoJsonRoute = "/countries.geo.json";
-const countriesGeoJsonPath = fileURLToPath(
-  new URL("../public/countries.geo.json", import.meta.url),
+const countriesMapRoute = "/countries.paths.json";
+const countriesMapPath = fileURLToPath(
+  new URL("../public/countries.paths.json", import.meta.url),
 );
 
 interface CountrySummary {
@@ -21,15 +21,8 @@ interface CountrySummary {
   name: string;
 }
 
-interface CountryFeature {
-  id?: string | number;
-  properties?: {
-    name?: string;
-  };
-}
-
-interface CountryFeatureCollection {
-  features?: CountryFeature[];
+interface CountryPathPayload {
+  countries?: Array<Partial<CountrySummary>>;
 }
 
 type RoomStatus = "lobby" | "playing" | "results";
@@ -136,24 +129,25 @@ let countriesPromise: Promise<CountrySummary[]> | null = null;
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(Math.max(value, minimum), maximum);
 
-const readCountriesGeoJson = () => readFile(countriesGeoJsonPath, "utf8");
+const readCountriesMap = () => readFile(countriesMapPath, "utf8");
 
 const loadCountries = async () => {
   if (!countriesPromise) {
-    countriesPromise = readCountriesGeoJson().then((contents) => {
-      const data = JSON.parse(contents) as CountryFeatureCollection;
+    countriesPromise = readCountriesMap().then((contents) => {
+      const data = JSON.parse(contents) as CountryPathPayload;
 
-      return (data.features ?? []).map((feature, index) => {
-        const rawName = feature.properties?.name?.trim();
-        const name = rawName || `Country ${index + 1}`;
-        const rawId =
-          feature.id === undefined || feature.id === null
-            ? name
-            : String(feature.id).trim();
-        const id = `${index}-${rawId || name}`;
+      return (data.countries ?? [])
+        .map((country, index) => {
+          const rawName =
+            typeof country.name === "string" ? country.name.trim() : "";
+          const name = rawName || `Country ${index + 1}`;
+          const rawId =
+            typeof country.id === "string" ? country.id.trim() : "";
+          const id = rawId || `${index}-${name}`;
 
-        return { id, name };
-      });
+          return { id, name } satisfies CountrySummary;
+        })
+        .filter((country) => country.id && country.name);
     });
   }
 
@@ -234,22 +228,22 @@ const sendError = (
   sendJson(response, statusCode, { error: message });
 };
 
-const handleCountriesGeoJsonMiddleware = (
+const handleCountriesMapMiddleware = (
   request: IncomingMessage,
   response: ServerResponse,
   next: () => void,
 ) => {
   const url = new URL(request.url ?? "/", "http://localhost");
 
-  if (request.method !== "GET" || url.pathname !== countriesGeoJsonRoute) {
+  if (request.method !== "GET" || url.pathname !== countriesMapRoute) {
     next();
     return;
   }
 
-  void readCountriesGeoJson()
+  void readCountriesMap()
     .then((contents) => {
       response.writeHead(200, {
-        "Content-Type": "application/geo+json; charset=utf-8",
+        "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-cache",
       });
       response.end(contents);
@@ -1000,11 +994,11 @@ const handleMultiplayerMiddleware = (
 export const multiplayerPlugin = (): Plugin => ({
   name: "country-game-multiplayer-server",
   configureServer(server) {
-    server.middlewares.use(handleCountriesGeoJsonMiddleware);
+    server.middlewares.use(handleCountriesMapMiddleware);
     server.middlewares.use(handleMultiplayerMiddleware);
   },
   configurePreviewServer(server) {
-    server.middlewares.use(handleCountriesGeoJsonMiddleware);
+    server.middlewares.use(handleCountriesMapMiddleware);
     server.middlewares.use(handleMultiplayerMiddleware);
   },
 });

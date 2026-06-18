@@ -1,10 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
-type Position = number[];
-type LinearRing = Position[];
-type PolygonCoordinates = LinearRing[];
-type MultiPolygonCoordinates = PolygonCoordinates[];
 type AnswerState = "idle" | "correct" | "incorrect";
 type GameMode = "solo" | "multiplayer";
 type GamePhase = "setup" | "playing" | "results";
@@ -81,34 +77,18 @@ interface MultiplayerApiResponse {
   room: MultiplayerRoomState;
 }
 
-type CountryGeometry =
-  | {
-      type: "Polygon";
-      coordinates: PolygonCoordinates;
-    }
-  | {
-      type: "MultiPolygon";
-      coordinates: MultiPolygonCoordinates;
-    };
-
-interface CountryFeature {
-  type: "Feature";
-  id?: string | number;
-  properties?: {
-    name?: string;
-  };
-  geometry: CountryGeometry | null;
-}
-
-interface CountryFeatureCollection {
-  type: "FeatureCollection";
-  features?: CountryFeature[];
-}
-
 interface CountryPath {
   id: string;
   name: string;
   path: string;
+}
+
+interface CountryPathPayload {
+  countries?: Array<{
+    id?: unknown;
+    name?: unknown;
+    path?: unknown;
+  }>;
 }
 
 interface LeaderboardPlayer extends Player {
@@ -669,49 +649,6 @@ const getClampedCenter = (center: MapPoint, zoom: number) => {
 
 const setMapCenter = (center: MapPoint) => {
   mapCenter.value = getClampedCenter(center, zoomLevel.value);
-};
-
-const coordinateToPoint = (coordinate: Position) => {
-  const longitude = coordinate[0] ?? 0;
-  const latitude = coordinate[1] ?? 0;
-
-  return `${longitude},${-latitude}`;
-};
-
-const ringToPath = (ring: LinearRing) => {
-  const firstCoordinate = ring[0];
-
-  if (!firstCoordinate) {
-    return "";
-  }
-
-  const commands = [`M${coordinateToPoint(firstCoordinate)}`];
-
-  for (let index = 1; index < ring.length; index += 1) {
-    const coordinate = ring[index];
-
-    if (coordinate) {
-      commands.push(`L${coordinateToPoint(coordinate)}`);
-    }
-  }
-
-  commands.push("Z");
-
-  return commands.join(" ");
-};
-
-const geometryToPath = (geometry: CountryGeometry | null) => {
-  if (!geometry) {
-    return "";
-  }
-
-  if (geometry.type === "Polygon") {
-    return geometry.coordinates.map(ringToPath).join(" ");
-  }
-
-  return geometry.coordinates
-    .flatMap((polygon) => polygon.map(ringToPath))
-    .join(" ");
 };
 
 function clearPendingRound() {
@@ -1463,23 +1400,20 @@ async function leaveServerRoom() {
 
 const loadCountries = async () => {
   try {
-    const response = await fetch("/countries.geo.json");
+    const response = await fetch("/countries.paths.json");
 
     if (!response.ok) {
       throw new Error(`Could not load the map (${response.status})`);
     }
 
-    const data = (await response.json()) as CountryFeatureCollection;
-    const features = data.features ?? [];
-    const loadedCountries = features.map((feature, index) => {
-      const rawName = feature.properties?.name?.trim();
+    const data = (await response.json()) as CountryPathPayload;
+    const loadedCountries = (data.countries ?? []).map((country, index) => {
+      const rawName =
+        typeof country.name === "string" ? country.name.trim() : "";
       const name = rawName || `Country ${index + 1}`;
-      const rawId =
-        feature.id === undefined || feature.id === null
-          ? name
-          : String(feature.id).trim();
-      const id = `${index}-${rawId || name}`;
-      const path = geometryToPath(feature.geometry);
+      const rawId = typeof country.id === "string" ? country.id.trim() : "";
+      const id = rawId || `${index}-${name}`;
+      const path = typeof country.path === "string" ? country.path : "";
 
       return { id, name, path };
     });
@@ -3340,6 +3274,7 @@ button:disabled:focus-visible {
   border-radius: 18px;
   background: #c7e8ff;
   cursor: grab;
+  shape-rendering: optimizeSpeed;
   touch-action: none;
   user-select: none;
 }
@@ -3359,20 +3294,19 @@ button:disabled:focus-visible {
   stroke-linejoin: round;
   stroke-width: 0.35;
   transition:
-    fill 160ms ease,
-    filter 160ms ease,
-    stroke 160ms ease;
+    fill 120ms ease,
+    stroke 120ms ease;
   outline: none;
 }
 
 .world-map--panning .country {
   cursor: grabbing;
+  pointer-events: none;
 }
 
 .country:hover,
 .country:focus-visible {
   fill: #fde68a;
-  filter: drop-shadow(0 0 1.5px rgba(15, 23, 42, 0.45));
   stroke: #1e293b;
 }
 
