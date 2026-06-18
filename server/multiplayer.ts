@@ -8,7 +8,7 @@ const maximumPlayerCount = 5;
 const minimumPlayerCount = 2;
 const defaultRoundCount = 10;
 const roundDurationSeconds = 10;
-const revealDelayMilliseconds = 1800;
+const revealDelayMilliseconds = 2500;
 const sseHeartbeatMilliseconds = 3000;
 const roomCodeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const countriesMapRoute = "/countries.paths.json";
@@ -141,8 +141,7 @@ const loadCountries = async () => {
           const rawName =
             typeof country.name === "string" ? country.name.trim() : "";
           const name = rawName || `Country ${index + 1}`;
-          const rawId =
-            typeof country.id === "string" ? country.id.trim() : "";
+          const rawId = typeof country.id === "string" ? country.id.trim() : "";
           const id = rawId || `${index}-${name}`;
 
           return { id, name } satisfies CountrySummary;

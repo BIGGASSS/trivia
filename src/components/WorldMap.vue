@@ -14,6 +14,19 @@ interface MapPoint {
   y: number;
 }
 
+interface MapViewState {
+  zoom: number;
+  center: MapPoint;
+}
+
+interface CountryFocusBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  area: number;
+}
+
 interface PinchGestureStart {
   distance: number;
   zoom: number;
@@ -120,8 +133,21 @@ const mapBounds = {
   height: 180,
 };
 const minimumMapZoom = 1;
-const maximumMapZoom = 32;
+const maximumMapZoom = 64;
 const zoomStep = 1.35;
+const missedCountryRevealRecenterMilliseconds = 250;
+const missedCountryRevealZoomInMilliseconds = 750;
+const missedCountryRevealZoomHoldMilliseconds = 450;
+const missedCountryRevealZoomOutMilliseconds = 850;
+const missedCountryRevealRoundDelayMilliseconds =
+  missedCountryRevealRecenterMilliseconds +
+  missedCountryRevealZoomInMilliseconds +
+  missedCountryRevealZoomHoldMilliseconds +
+  missedCountryRevealZoomOutMilliseconds +
+  200;
+const missedCountryRevealTargetFillRatio = 0.62;
+const missedCountryRevealMinimumSpan = 0.75;
+const missedCountryRevealZoomBoost = 1.15;
 const dragClickThreshold = 4;
 const maximumPlayerCount = 5;
 const minimumMultiplayerPlayerCount = 2;
@@ -191,6 +217,11 @@ const hasDraggedMap = ref(false);
 const suppressNextCountryClick = ref(false);
 const activeMapPointers = new Map<number, MapPoint>();
 const pointerCaptureElements = new Map<number, Element>();
+let revealZoomAnimationFrame: number | null = null;
+let revealZoomHoldTimeout: number | null = null;
+let revealZoomSequenceId = 0;
+let revealZoomRestoreState: MapViewState | null = null;
+let lastRevealZoomKey: string | null = null;
 let isSyncingRoute = false;
 let roomSyncRequestId = 0;
 
@@ -651,6 +682,266 @@ const setMapCenter = (center: MapPoint) => {
   mapCenter.value = getClampedCenter(center, zoomLevel.value);
 };
 
+const getCurrentMapViewState = (): MapViewState => ({
+  zoom: zoomLevel.value,
+  center: { ...mapCenter.value },
+});
+
+const setMapViewState = (
+  state: MapViewState,
+  options: { clampCenter?: boolean } = {},
+) => {
+  const clampedZoom = clamp(state.zoom, minimumMapZoom, maximumMapZoom);
+
+  zoomLevel.value = clampedZoom;
+  mapCenter.value =
+    options.clampCenter === false
+      ? { ...state.center }
+      : getClampedCenter(state.center, clampedZoom);
+};
+
+const getPathSubpathBounds = (subpath: string) => {
+  const coordinateValues =
+    subpath.match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) ?? [];
+  const points: MapPoint[] = [];
+  let minimumX = Number.POSITIVE_INFINITY;
+  let maximumX = Number.NEGATIVE_INFINITY;
+  let minimumY = Number.POSITIVE_INFINITY;
+  let maximumY = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < coordinateValues.length - 1; index += 2) {
+    const x = Number(coordinateValues[index]);
+    const y = Number(coordinateValues[index + 1]);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+
+    points.push({ x, y });
+    minimumX = Math.min(minimumX, x);
+    maximumX = Math.max(maximumX, x);
+    minimumY = Math.min(minimumY, y);
+    maximumY = Math.max(maximumY, y);
+  }
+
+  if (points.length === 0) {
+    return null;
+  }
+
+  const signedArea = points.reduce((totalArea, point, index) => {
+    const nextPoint = points[(index + 1) % points.length] ?? point;
+
+    return totalArea + point.x * nextPoint.y - nextPoint.x * point.y;
+  }, 0);
+  const width = maximumX - minimumX;
+  const height = maximumY - minimumY;
+  const polygonArea = Math.abs(signedArea) / 2;
+
+  return {
+    x: minimumX,
+    y: minimumY,
+    width,
+    height,
+    area: polygonArea > 0 ? polygonArea : width * height,
+  } satisfies CountryFocusBounds;
+};
+
+const getCountryFocusBounds = (countryId: string) => {
+  const country = countries.value.find((entry) => entry.id === countryId);
+
+  if (!country) {
+    return null;
+  }
+
+  const subpathBounds = (country.path.match(/M[^M]*/g) ?? [])
+    .map((subpath) => getPathSubpathBounds(subpath))
+    .filter((bounds): bounds is CountryFocusBounds => bounds !== null)
+    .sort((firstBounds, secondBounds) => {
+      if (secondBounds.area !== firstBounds.area) {
+        return secondBounds.area - firstBounds.area;
+      }
+
+      return (
+        secondBounds.width * secondBounds.height -
+        firstBounds.width * firstBounds.height
+      );
+    });
+
+  return subpathBounds[0] ?? null;
+};
+
+const getMissedCountryRevealTarget = (
+  countryId: string,
+  restoreState: MapViewState,
+): MapViewState | null => {
+  const bounds = getCountryFocusBounds(countryId);
+
+  if (!bounds) {
+    return null;
+  }
+
+  const countryWidth = Math.max(bounds.width, missedCountryRevealMinimumSpan);
+  const countryHeight = Math.max(bounds.height, missedCountryRevealMinimumSpan);
+  const fittedZoom = Math.min(
+    (mapBounds.width * missedCountryRevealTargetFillRatio) / countryWidth,
+    (mapBounds.height * missedCountryRevealTargetFillRatio) / countryHeight,
+  );
+  const zoom = clamp(
+    Math.max(fittedZoom, restoreState.zoom * missedCountryRevealZoomBoost),
+    minimumMapZoom,
+    maximumMapZoom,
+  );
+  const center = {
+    x: bounds.x + bounds.width / 2,
+    y: bounds.y + bounds.height / 2,
+  };
+
+  return { zoom, center };
+};
+
+const easeInOutCubic = (progress: number) =>
+  progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+const clearRevealZoomAnimation = () => {
+  if (revealZoomAnimationFrame !== null) {
+    window.cancelAnimationFrame(revealZoomAnimationFrame);
+    revealZoomAnimationFrame = null;
+  }
+
+  if (revealZoomHoldTimeout !== null) {
+    window.clearTimeout(revealZoomHoldTimeout);
+    revealZoomHoldTimeout = null;
+  }
+};
+
+const cancelRevealZoomAnimation = (restorePreviousView = false) => {
+  clearRevealZoomAnimation();
+  revealZoomSequenceId += 1;
+
+  if (restorePreviousView && revealZoomRestoreState) {
+    setMapViewState(revealZoomRestoreState);
+  }
+
+  revealZoomRestoreState = null;
+};
+
+const animateMapView = (
+  fromState: MapViewState,
+  toState: MapViewState,
+  duration: number,
+  sequenceId: number,
+  onComplete?: () => void,
+  options: { clampCenter?: boolean } = {},
+) => {
+  const startTime = window.performance.now();
+
+  const step = (timestamp: number) => {
+    if (sequenceId !== revealZoomSequenceId) {
+      return;
+    }
+
+    const progress = clamp((timestamp - startTime) / duration, 0, 1);
+    const easedProgress = easeInOutCubic(progress);
+
+    setMapViewState(
+      {
+        zoom: fromState.zoom + (toState.zoom - fromState.zoom) * easedProgress,
+        center: {
+          x:
+            fromState.center.x +
+            (toState.center.x - fromState.center.x) * easedProgress,
+          y:
+            fromState.center.y +
+            (toState.center.y - fromState.center.y) * easedProgress,
+        },
+      },
+      options,
+    );
+
+    if (progress < 1) {
+      revealZoomAnimationFrame = window.requestAnimationFrame(step);
+      return;
+    }
+
+    revealZoomAnimationFrame = null;
+    setMapViewState(toState, options);
+    onComplete?.();
+  };
+
+  revealZoomAnimationFrame = window.requestAnimationFrame(step);
+};
+
+const playMissedCountryRevealZoom = (countryId: string) => {
+  const restoreState = getCurrentMapViewState();
+  const targetState = getMissedCountryRevealTarget(countryId, restoreState);
+
+  if (!targetState) {
+    return false;
+  }
+
+  clearRevealZoomAnimation();
+  const sequenceId = (revealZoomSequenceId += 1);
+  const centeredStartState = {
+    zoom: restoreState.zoom,
+    center: targetState.center,
+  } satisfies MapViewState;
+  revealZoomRestoreState = restoreState;
+
+  const zoomIntoCenteredCountry = () => {
+    if (sequenceId !== revealZoomSequenceId) {
+      return;
+    }
+
+    animateMapView(
+      getCurrentMapViewState(),
+      targetState,
+      missedCountryRevealZoomInMilliseconds,
+      sequenceId,
+      () => {
+        if (sequenceId !== revealZoomSequenceId) {
+          return;
+        }
+
+        revealZoomHoldTimeout = window.setTimeout(() => {
+          revealZoomHoldTimeout = null;
+
+          if (sequenceId !== revealZoomSequenceId) {
+            return;
+          }
+
+          animateMapView(
+            getCurrentMapViewState(),
+            restoreState,
+            missedCountryRevealZoomOutMilliseconds,
+            sequenceId,
+            () => {
+              if (sequenceId === revealZoomSequenceId) {
+                setMapViewState(restoreState);
+                revealZoomRestoreState = null;
+              }
+            },
+            { clampCenter: false },
+          );
+        }, missedCountryRevealZoomHoldMilliseconds);
+      },
+      { clampCenter: false },
+    );
+  };
+
+  animateMapView(
+    restoreState,
+    centeredStartState,
+    missedCountryRevealRecenterMilliseconds,
+    sequenceId,
+    zoomIntoCenteredCountry,
+    { clampCenter: false },
+  );
+
+  return true;
+};
+
 function clearPendingRound() {
   if (nextRoundTimeout.value !== null) {
     window.clearTimeout(nextRoundTimeout.value);
@@ -827,7 +1118,7 @@ function handleSoloRoundTimeout() {
   resolveSoloRound(
     false,
     `Time's up! The correct answer was ${currentCountry.value.name}.`,
-    1400,
+    missedCountryRevealRoundDelayMilliseconds,
     "timeout",
   );
 }
@@ -1541,19 +1832,23 @@ const setZoomFromClientAnchor = (
 };
 
 const zoomIn = () => {
+  cancelRevealZoomAnimation();
   setZoom(zoomLevel.value * zoomStep);
 };
 
 const zoomOut = () => {
+  cancelRevealZoomAnimation();
   setZoom(zoomLevel.value / zoomStep);
 };
 
 const resetZoom = () => {
+  cancelRevealZoomAnimation();
   zoomLevel.value = minimumMapZoom;
   mapCenter.value = { x: 0, y: 0 };
 };
 
 const handleMapWheel = (event: WheelEvent) => {
+  cancelRevealZoomAnimation();
   const focalPoint = getSvgPoint(event);
   const zoomFactor = event.deltaY < 0 ? zoomStep : 1 / zoomStep;
 
@@ -1728,6 +2023,8 @@ const handleMapPointerDown = (event: PointerEvent) => {
     return;
   }
 
+  cancelRevealZoomAnimation();
+
   const svg = mapSvg.value;
 
   if (!svg) {
@@ -1834,7 +2131,7 @@ const handleCountryGuess = (country: CountryPath) => {
   resolveSoloRound(
     false,
     `Not quite — that was ${country.name}. The correct answer was ${currentCountry.value.name}.`,
-    1400,
+    missedCountryRevealRoundDelayMilliseconds,
   );
 };
 
@@ -1856,7 +2153,7 @@ const skipCountry = () => {
   resolveSoloRound(
     false,
     `Skipped. The correct answer was ${currentCountry.value.name}.`,
-    1200,
+    missedCountryRevealRoundDelayMilliseconds,
     "skipped",
   );
 };
@@ -1887,6 +2184,34 @@ watch(selectedMode, (mode) => {
   setGamePath(mode === "solo" ? soloGamePath : multiplayerGamePath);
 });
 
+watch(
+  () => ({
+    countryCount: countries.value.length,
+    countryId: missedTargetCountryId.value,
+    phase: gamePhase.value,
+    playerId: roomState.value?.playerId ?? "solo",
+    roomCode: roomState.value?.roomCode ?? "solo",
+    round: currentRoundNumber.value,
+  }),
+  ({ countryId, phase, playerId, roomCode, round }) => {
+    if (!countryId || phase !== "playing") {
+      lastRevealZoomKey = null;
+      cancelRevealZoomAnimation(true);
+      return;
+    }
+
+    const revealZoomKey = `${roomCode}:${playerId}:${round}:${countryId}`;
+
+    if (revealZoomKey === lastRevealZoomKey) {
+      return;
+    }
+
+    if (playMissedCountryRevealZoom(countryId)) {
+      lastRevealZoomKey = revealZoomKey;
+    }
+  },
+);
+
 onMounted(() => {
   void loadCountries();
   void syncRouteToState();
@@ -1900,6 +2225,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  cancelRevealZoomAnimation();
   clearPendingRound();
   clearRoundTimer();
   clearClockTimer();
