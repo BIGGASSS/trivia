@@ -135,12 +135,12 @@ const mapBounds = {
 const minimumMapZoom = 1;
 const maximumMapZoom = 64;
 const zoomStep = 1.35;
-const missedCountryRevealRecenterMilliseconds = 250;
-const missedCountryRevealZoomInMilliseconds = 750;
+const missedCountryRevealResetMilliseconds = 250;
+const missedCountryRevealZoomInMilliseconds = 800;
 const missedCountryRevealZoomHoldMilliseconds = 450;
-const missedCountryRevealZoomOutMilliseconds = 850;
+const missedCountryRevealZoomOutMilliseconds = 900;
 const missedCountryRevealRoundDelayMilliseconds =
-  missedCountryRevealRecenterMilliseconds +
+  missedCountryRevealResetMilliseconds +
   missedCountryRevealZoomInMilliseconds +
   missedCountryRevealZoomHoldMilliseconds +
   missedCountryRevealZoomOutMilliseconds +
@@ -687,6 +687,11 @@ const getCurrentMapViewState = (): MapViewState => ({
   center: { ...mapCenter.value },
 });
 
+const getDefaultMapViewState = (): MapViewState => ({
+  zoom: minimumMapZoom,
+  center: { x: 0, y: 0 },
+});
+
 const setMapViewState = (
   state: MapViewState,
   options: { clampCenter?: boolean } = {},
@@ -873,8 +878,78 @@ const animateMapView = (
   revealZoomAnimationFrame = window.requestAnimationFrame(step);
 };
 
+const getMapPointViewRatio = (point: MapPoint, state: MapViewState) => {
+  const { width, height } = getViewBoxSize(state.zoom);
+
+  return {
+    x: (point.x - (state.center.x - width / 2)) / width,
+    y: (point.y - (state.center.y - height / 2)) / height,
+  };
+};
+
+const getMapViewStateForPointRatio = (
+  point: MapPoint,
+  zoom: number,
+  ratio: MapPoint,
+): MapViewState => {
+  const { width, height } = getViewBoxSize(zoom);
+
+  return {
+    zoom,
+    center: {
+      x: point.x + (0.5 - ratio.x) * width,
+      y: point.y + (0.5 - ratio.y) * height,
+    },
+  };
+};
+
+const animateMapZoomAroundPoint = (
+  fromState: MapViewState,
+  toState: MapViewState,
+  focalPoint: MapPoint,
+  duration: number,
+  sequenceId: number,
+  onComplete?: () => void,
+) => {
+  const startTime = window.performance.now();
+  const fromRatio = getMapPointViewRatio(focalPoint, fromState);
+  const toRatio = getMapPointViewRatio(focalPoint, toState);
+
+  const step = (timestamp: number) => {
+    if (sequenceId !== revealZoomSequenceId) {
+      return;
+    }
+
+    const progress = clamp((timestamp - startTime) / duration, 0, 1);
+    const easedProgress = easeInOutCubic(progress);
+    const zoom =
+      fromState.zoom + (toState.zoom - fromState.zoom) * easedProgress;
+    const ratio = {
+      x: fromRatio.x + (toRatio.x - fromRatio.x) * easedProgress,
+      y: fromRatio.y + (toRatio.y - fromRatio.y) * easedProgress,
+    };
+
+    setMapViewState(
+      getMapViewStateForPointRatio(focalPoint, zoom, ratio),
+      { clampCenter: false },
+    );
+
+    if (progress < 1) {
+      revealZoomAnimationFrame = window.requestAnimationFrame(step);
+      return;
+    }
+
+    revealZoomAnimationFrame = null;
+    setMapViewState(toState, { clampCenter: false });
+    onComplete?.();
+  };
+
+  revealZoomAnimationFrame = window.requestAnimationFrame(step);
+};
+
 const playMissedCountryRevealZoom = (countryId: string) => {
   const restoreState = getCurrentMapViewState();
+  const defaultState = getDefaultMapViewState();
   const targetState = getMissedCountryRevealTarget(countryId, restoreState);
 
   if (!targetState) {
@@ -883,60 +958,60 @@ const playMissedCountryRevealZoom = (countryId: string) => {
 
   clearRevealZoomAnimation();
   const sequenceId = (revealZoomSequenceId += 1);
-  const centeredStartState = {
-    zoom: restoreState.zoom,
-    center: targetState.center,
-  } satisfies MapViewState;
   revealZoomRestoreState = restoreState;
 
-  const zoomIntoCenteredCountry = () => {
+  const restoreOriginalView = () => {
     if (sequenceId !== revealZoomSequenceId) {
       return;
     }
 
     animateMapView(
       getCurrentMapViewState(),
-      targetState,
-      missedCountryRevealZoomInMilliseconds,
+      restoreState,
+      missedCountryRevealZoomOutMilliseconds,
       sequenceId,
       () => {
-        if (sequenceId !== revealZoomSequenceId) {
-          return;
+        if (sequenceId === revealZoomSequenceId) {
+          setMapViewState(restoreState);
+          revealZoomRestoreState = null;
         }
-
-        revealZoomHoldTimeout = window.setTimeout(() => {
-          revealZoomHoldTimeout = null;
-
-          if (sequenceId !== revealZoomSequenceId) {
-            return;
-          }
-
-          animateMapView(
-            getCurrentMapViewState(),
-            restoreState,
-            missedCountryRevealZoomOutMilliseconds,
-            sequenceId,
-            () => {
-              if (sequenceId === revealZoomSequenceId) {
-                setMapViewState(restoreState);
-                revealZoomRestoreState = null;
-              }
-            },
-            { clampCenter: false },
-          );
-        }, missedCountryRevealZoomHoldMilliseconds);
       },
       { clampCenter: false },
     );
   };
 
+  const holdOnCountry = () => {
+    if (sequenceId !== revealZoomSequenceId) {
+      return;
+    }
+
+    revealZoomHoldTimeout = window.setTimeout(() => {
+      revealZoomHoldTimeout = null;
+      restoreOriginalView();
+    }, missedCountryRevealZoomHoldMilliseconds);
+  };
+
+  const zoomIntoCenteredCountry = () => {
+    if (sequenceId !== revealZoomSequenceId) {
+      return;
+    }
+
+    animateMapZoomAroundPoint(
+      getCurrentMapViewState(),
+      targetState,
+      targetState.center,
+      missedCountryRevealZoomInMilliseconds,
+      sequenceId,
+      holdOnCountry,
+    );
+  };
+
   animateMapView(
     restoreState,
-    centeredStartState,
-    missedCountryRevealRecenterMilliseconds,
+    defaultState,
+    missedCountryRevealResetMilliseconds,
     sequenceId,
     zoomIntoCenteredCountry,
-    { clampCenter: false },
   );
 
   return true;
@@ -1843,8 +1918,7 @@ const zoomOut = () => {
 
 const resetZoom = () => {
   cancelRevealZoomAnimation();
-  zoomLevel.value = minimumMapZoom;
-  mapCenter.value = { x: 0, y: 0 };
+  setMapViewState(getDefaultMapViewState());
 };
 
 const handleMapWheel = (event: WheelEvent) => {
