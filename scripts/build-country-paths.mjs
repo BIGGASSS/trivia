@@ -2,12 +2,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-const [
-  ,
-  ,
-  sourceArg = "data/countries.geo.json",
-  destinationArg = "public/countries.paths.json",
-] = process.argv;
+const [, , sourceArg = "data/countries.geo.json", destinationArg = "public/countries.paths.json"] =
+  process.argv;
 
 const sourcePath = resolve(sourceArg);
 const destinationPath = resolve(destinationArg);
@@ -37,12 +33,7 @@ const getIntegerEnv = (name, fallback, minimum, maximum) => {
 // blocky grid steps.
 const simplificationTolerance = getNumberEnv("COUNTRY_MAP_TOLERANCE", 0.08);
 const minimumRingArea = getNumberEnv("COUNTRY_MAP_MIN_AREA", 0.02);
-const maximumRingsPerCountry = getIntegerEnv(
-  "COUNTRY_MAP_MAX_RINGS_PER_COUNTRY",
-  20,
-  1,
-  100,
-);
+const maximumRingsPerCountry = getIntegerEnv("COUNTRY_MAP_MAX_RINGS_PER_COUNTRY", 20, 1, 100);
 const coordinateDecimals = getIntegerEnv("COUNTRY_MAP_DECIMALS", 3, 0, 6);
 
 let sourceRingCount = 0;
@@ -66,8 +57,7 @@ const getSquaredSegmentDistance = (point, first, second) => {
 
   if (deltaX !== 0 || deltaY !== 0) {
     const progress =
-      ((point[0] - x) * deltaX + (point[1] - y) * deltaY) /
-      (deltaX * deltaX + deltaY * deltaY);
+      ((point[0] - x) * deltaX + (point[1] - y) * deltaY) / (deltaX * deltaX + deltaY * deltaY);
 
     if (progress > 1) {
       x = second[0];
@@ -129,13 +119,10 @@ const toPoint = (coordinate) => {
   const longitude = Number(coordinate[0]);
   const latitude = Number(coordinate[1]);
 
-  return Number.isFinite(longitude) && Number.isFinite(latitude)
-    ? [longitude, latitude]
-    : null;
+  return Number.isFinite(longitude) && Number.isFinite(latitude) ? [longitude, latitude] : null;
 };
 
-const pointsMatch = (first, second) =>
-  first[0] === second[0] && first[1] === second[1];
+const pointsMatch = (first, second) => first[0] === second[0] && first[1] === second[1];
 
 const removeClosingPoint = (points) => {
   if (points.length > 1 && pointsMatch(points[0], points[points.length - 1])) {
@@ -165,9 +152,7 @@ const getRingArea = (points) => {
 const pointKey = (point) => `${point[0]},${point[1]}`;
 
 const edgeKey = (firstKey, secondKey) =>
-  firstKey < secondKey
-    ? `${firstKey}|${secondKey}`
-    : `${secondKey}|${firstKey}`;
+  firstKey < secondKey ? `${firstKey}|${secondKey}` : `${secondKey}|${firstKey}`;
 
 const addAdjacentPoint = (adjacency, firstKey, secondKey) => {
   const adjacentPoints = adjacency.get(firstKey) ?? new Set();
@@ -257,10 +242,8 @@ const isJunctionPoint = (ring, index, topology) => {
   const currentKey = ring.keys[index];
   const previousKey = ring.keys[(index - 1 + ring.keys.length) % ring.keys.length];
   const nextKey = ring.keys[(index + 1) % ring.keys.length];
-  const previousEdgeUseCount =
-    topology.edgeUseCounts.get(edgeKey(previousKey, currentKey)) ?? 0;
-  const nextEdgeUseCount =
-    topology.edgeUseCounts.get(edgeKey(currentKey, nextKey)) ?? 0;
+  const previousEdgeUseCount = topology.edgeUseCounts.get(edgeKey(previousKey, currentKey)) ?? 0;
+  const nextEdgeUseCount = topology.edgeUseCounts.get(edgeKey(currentKey, nextKey)) ?? 0;
   const adjacentPointCount = topology.adjacency.get(currentKey)?.size ?? 0;
 
   return adjacentPointCount !== 2 || previousEdgeUseCount !== nextEdgeUseCount;
@@ -296,11 +279,7 @@ const getFallbackTriangle = (points) => {
       continue;
     }
 
-    const distance = getSquaredSegmentDistance(
-      points[index],
-      points[0],
-      points[farthestIndex],
-    );
+    const distance = getSquaredSegmentDistance(points[index], points[0], points[farthestIndex]);
 
     if (distance > thirdDistance) {
       thirdIndex = index;
@@ -312,9 +291,7 @@ const getFallbackTriangle = (points) => {
     (first, second) => first - second,
   );
 
-  return indexes.length >= 3
-    ? indexes.map((index) => points[index])
-    : points.slice(0, 3);
+  return indexes.length >= 3 ? indexes.map((index) => points[index]) : points.slice(0, 3);
 };
 
 const simplifyClosedRing = (points) => {
@@ -324,10 +301,7 @@ const simplifyClosedRing = (points) => {
 
   const farthestIndex = getFarthestIndexFromFirstPoint(points);
   const firstHalf = simplifyOpenPolyline(points.slice(0, farthestIndex + 1));
-  const secondHalf = simplifyOpenPolyline([
-    ...points.slice(farthestIndex),
-    points[0],
-  ]);
+  const secondHalf = simplifyOpenPolyline([...points.slice(farthestIndex), points[0]]);
   const simplified = [...firstHalf, ...secondHalf.slice(1, -1)];
 
   return simplified.length >= 3 ? simplified : getFallbackTriangle(points);
@@ -386,9 +360,7 @@ const simplifyRingWithTopology = (ring, topology) => {
     const simplifiedArcPoints = getSimplifiedSharedArc(arcPoints);
 
     simplifiedPoints.push(
-      ...(simplifiedPoints.length === 0
-        ? simplifiedArcPoints
-        : simplifiedArcPoints.slice(1)),
+      ...(simplifiedPoints.length === 0 ? simplifiedArcPoints : simplifiedArcPoints.slice(1)),
     );
   }
 
@@ -403,8 +375,7 @@ const formatNumber = (value) => {
   return Object.is(rounded, -0) ? "0" : String(rounded);
 };
 
-const pointToPathCoordinate = (point) =>
-  `${formatNumber(point[0])},${formatNumber(-point[1])}`;
+const pointToPathCoordinate = (point) => `${formatNumber(point[0])},${formatNumber(-point[1])}`;
 
 const ringToPath = (points) => {
   outputPointCount += points.length;
@@ -415,15 +386,12 @@ const ringToPath = (points) => {
 const getCountryName = (feature, index) => {
   const rawName = feature?.properties?.name;
 
-  return typeof rawName === "string" && rawName.trim()
-    ? rawName.trim()
-    : `Country ${index + 1}`;
+  return typeof rawName === "string" && rawName.trim() ? rawName.trim() : `Country ${index + 1}`;
 };
 
 const getCountryId = (feature, index, name) => {
   const rawId = feature?.id;
-  const id =
-    rawId === undefined || rawId === null ? name : String(rawId).trim();
+  const id = rawId === undefined || rawId === null ? name : String(rawId).trim();
 
   return `${index}-${id || name}`;
 };
@@ -451,10 +419,7 @@ const countries = features
 await mkdir(dirname(destinationPath), { recursive: true });
 await writeFile(destinationPath, `${JSON.stringify({ countries })}\n`, "utf8");
 
-const outputBytes = Buffer.byteLength(
-  await readFile(destinationPath, "utf8"),
-  "utf8",
-);
+const outputBytes = Buffer.byteLength(await readFile(destinationPath, "utf8"), "utf8");
 
 console.log(
   `Wrote ${countries.length} countries to ${destinationArg} ` +
@@ -470,6 +435,4 @@ console.log(
   `Options: tolerance=${simplificationTolerance}, minArea=${minimumRingArea}, ` +
     `maxRingsPerCountry=${maximumRingsPerCountry}, decimals=${coordinateDecimals}.`,
 );
-console.log(
-  `Source outer rings contained ${sourcePointCount.toLocaleString()} total points.`,
-);
+console.log(`Source outer rings contained ${sourcePointCount.toLocaleString()} total points.`);

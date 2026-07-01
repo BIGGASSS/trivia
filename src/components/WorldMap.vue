@@ -268,8 +268,7 @@ const parseGameRoute = (): GameRoute => {
 
     if (roomCode) {
       const searchParameters = new URLSearchParams(window.location.search);
-      const playerId =
-        searchParameters.get("playerId") ?? searchParameters.get("player");
+      const playerId = searchParameters.get("playerId") ?? searchParameters.get("player");
 
       return { type: "multiplayer-room", roomCode, playerId };
     }
@@ -282,18 +281,13 @@ const parseGameRoute = (): GameRoute => {
 
 const getStoredMultiplayerSessions = () => {
   try {
-    const storedValue = window.localStorage.getItem(
-      multiplayerSessionStorageKey,
-    );
+    const storedValue = window.localStorage.getItem(multiplayerSessionStorageKey);
 
     if (!storedValue) {
       return {} as Record<string, StoredMultiplayerSession>;
     }
 
-    const parsedValue = JSON.parse(storedValue) as Record<
-      string,
-      StoredMultiplayerSession
-    >;
+    const parsedValue = JSON.parse(storedValue) as Record<string, StoredMultiplayerSession>;
 
     return parsedValue && typeof parsedValue === "object"
       ? parsedValue
@@ -317,31 +311,22 @@ const saveMultiplayerSession = (room: MultiplayerRoomState) => {
     updatedAt: Date.now(),
   };
 
-  window.localStorage.setItem(
-    multiplayerSessionStorageKey,
-    JSON.stringify(sessions),
-  );
+  window.localStorage.setItem(multiplayerSessionStorageKey, JSON.stringify(sessions));
 };
 
 const removeMultiplayerSession = (roomCode: string) => {
   const sessions = getStoredMultiplayerSessions();
 
   delete sessions[normalizeRoomCode(roomCode)];
-  window.localStorage.setItem(
-    multiplayerSessionStorageKey,
-    JSON.stringify(sessions),
-  );
+  window.localStorage.setItem(multiplayerSessionStorageKey, JSON.stringify(sessions));
 };
 
-const normalizedJoinRoomCode = computed(() =>
-  normalizeRoomCode(multiplayerRoomCodeInput.value),
-);
+const normalizedJoinRoomCode = computed(() => normalizeRoomCode(multiplayerRoomCodeInput.value));
 
 const isServerMultiplayerActive = computed(() => roomState.value !== null);
 const isPlayingGame = computed(
   () =>
-    roomState.value?.status === "playing" ||
-    (!roomState.value && gamePhase.value === "playing"),
+    roomState.value?.status === "playing" || (!roomState.value && gamePhase.value === "playing"),
 );
 const multiplayerConnectionMessage = computed(() => {
   if (!roomState.value || roomConnectionState.value === "connected") {
@@ -365,12 +350,9 @@ const multiplayerSelf = computed(() => {
 
   return room.players.find((player) => player.id === room.playerId) ?? null;
 });
-const isMultiplayerHost = computed(
-  () => roomState.value?.hostId === roomState.value?.playerId,
-);
+const isMultiplayerHost = computed(() => roomState.value?.hostId === roomState.value?.playerId);
 const answeredPlayersCount = computed(
-  () =>
-    roomState.value?.players.filter((player) => player.hasAnswered).length ?? 0,
+  () => roomState.value?.players.filter((player) => player.hasAnswered).length ?? 0,
 );
 const displayPlayers = computed<Player[]>(() => {
   if (roomState.value) {
@@ -382,9 +364,7 @@ const displayPlayers = computed<Player[]>(() => {
 const scoreboardPlayer = computed<Player>(() =>
   multiplayerSelf.value ? multiplayerSelf.value : soloPlayer.value,
 );
-const displayRoundCount = computed(
-  () => roomState.value?.roundCount ?? totalRounds.value,
-);
+const displayRoundCount = computed(() => roomState.value?.roundCount ?? totalRounds.value);
 const displayRoundDurationSeconds = computed(
   () => roomState.value?.roundDurationSeconds ?? roundDurationSeconds,
 );
@@ -442,19 +422,11 @@ const displayTimeLeft = computed(() => {
     return 0;
   }
 
-  return clamp(
-    Math.ceil((room.roundEndsAt - now.value) / 1000),
-    0,
-    room.roundDurationSeconds,
-  );
+  return clamp(Math.ceil((room.roundEndsAt - now.value) / 1000), 0, room.roundDurationSeconds);
 });
 
 const timerPercent = computed(() => {
-  const clampedTime = clamp(
-    displayTimeLeft.value,
-    0,
-    displayRoundDurationSeconds.value,
-  );
+  const clampedTime = clamp(displayTimeLeft.value, 0, displayRoundDurationSeconds.value);
 
   return `${(clampedTime / displayRoundDurationSeconds.value) * 100}%`;
 });
@@ -516,22 +488,15 @@ const displaySelectedCountryId = computed(() => {
 
 const missedTargetCountryId = computed(() => {
   if (roomState.value) {
-    return displayAnswerState.value === "incorrect"
-      ? roomState.value.revealCountryId
-      : null;
+    return displayAnswerState.value === "incorrect" ? roomState.value.revealCountryId : null;
   }
 
-  return displayAnswerState.value === "incorrect"
-    ? (currentCountry.value?.id ?? null)
-    : null;
+  return displayAnswerState.value === "incorrect" ? (currentCountry.value?.id ?? null) : null;
 });
 
 const displayRoundLocked = computed(() => {
   if (roomState.value) {
-    return (
-      roomState.value.roundLocked ||
-      (multiplayerSelf.value?.hasAnswered ?? false)
-    );
+    return roomState.value.roundLocked || (multiplayerSelf.value?.hasAnswered ?? false);
   }
 
   return isRoundLocked.value;
@@ -548,19 +513,14 @@ const isMapGuessingDisabled = computed(() => {
     );
   }
 
-  return (
-    !currentCountry.value ||
-    isRoundLocked.value ||
-    gamePhase.value !== "playing"
-  );
+  return !currentCountry.value || isRoundLocked.value || gamePhase.value !== "playing";
 });
 
 const leaderboard = computed<LeaderboardPlayer[]>(() =>
   displayPlayers.value
     .map((player, originalIndex) => {
       const multiplayerPlayer = player as Partial<MultiplayerPlayer>;
-      const accuracyValue =
-        player.attempts === 0 ? 0 : player.score / player.attempts;
+      const accuracyValue = player.attempts === 0 ? 0 : player.score / player.attempts;
 
       return {
         ...player,
@@ -586,25 +546,19 @@ const leaderboard = computed<LeaderboardPlayer[]>(() =>
 );
 
 const displayRoundCountries = computed(() =>
-  roomState.value
-    ? (roomState.value.roundCountries ?? [])
-    : soloRoundCountries.value,
+  roomState.value ? (roomState.value.roundCountries ?? []) : soloRoundCountries.value,
 );
 
 const performanceColumns = computed(() =>
   Array.from({ length: displayRoundCount.value }, (_, index) => {
     const round = index + 1;
-    const roundCountry = displayRoundCountries.value.find(
-      (country) => country.round === round,
-    );
+    const roundCountry = displayRoundCountries.value.find((country) => country.round === round);
     const countryName = roundCountry?.countryName ?? `Round ${round}`;
 
     return {
       round,
       countryName,
-      ariaLabel: roundCountry
-        ? `Round ${round}: ${countryName}`
-        : `Round ${round}`,
+      ariaLabel: roundCountry ? `Round ${round}: ${countryName}` : `Round ${round}`,
     };
   }),
 );
@@ -622,8 +576,7 @@ const roundPerformanceMeta: Record<
 
 const getRoundPerformance = (player: Player, round: number) => {
   const outcome =
-    player.roundPerformance?.find((performance) => performance.round === round)
-      ?.outcome ?? "empty";
+    player.roundPerformance?.find((performance) => performance.round === round)?.outcome ?? "empty";
   const meta = roundPerformanceMeta[outcome];
 
   return {
@@ -692,10 +645,7 @@ const getDefaultMapViewState = (): MapViewState => ({
   center: { x: 0, y: 0 },
 });
 
-const setMapViewState = (
-  state: MapViewState,
-  options: { clampCenter?: boolean } = {},
-) => {
+const setMapViewState = (state: MapViewState, options: { clampCenter?: boolean } = {}) => {
   const clampedZoom = clamp(state.zoom, minimumMapZoom, maximumMapZoom);
 
   zoomLevel.value = clampedZoom;
@@ -706,8 +656,7 @@ const setMapViewState = (
 };
 
 const getPathSubpathBounds = (subpath: string) => {
-  const coordinateValues =
-    subpath.match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) ?? [];
+  const coordinateValues = subpath.match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) ?? [];
   const points: MapPoint[] = [];
   let minimumX = Number.POSITIVE_INFINITY;
   let maximumX = Number.NEGATIVE_INFINITY;
@@ -766,10 +715,7 @@ const getCountryFocusBounds = (countryId: string) => {
         return secondBounds.area - firstBounds.area;
       }
 
-      return (
-        secondBounds.width * secondBounds.height -
-        firstBounds.width * firstBounds.height
-      );
+      return secondBounds.width * secondBounds.height - firstBounds.width * firstBounds.height;
     });
 
   return subpathBounds[0] ?? null;
@@ -805,9 +751,7 @@ const getMissedCountryRevealTarget = (
 };
 
 const easeInOutCubic = (progress: number) =>
-  progress < 0.5
-    ? 4 * progress * progress * progress
-    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+  progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
 const clearRevealZoomAnimation = () => {
   if (revealZoomAnimationFrame !== null) {
@@ -854,12 +798,8 @@ const animateMapView = (
       {
         zoom: fromState.zoom + (toState.zoom - fromState.zoom) * easedProgress,
         center: {
-          x:
-            fromState.center.x +
-            (toState.center.x - fromState.center.x) * easedProgress,
-          y:
-            fromState.center.y +
-            (toState.center.y - fromState.center.y) * easedProgress,
+          x: fromState.center.x + (toState.center.x - fromState.center.x) * easedProgress,
+          y: fromState.center.y + (toState.center.y - fromState.center.y) * easedProgress,
         },
       },
       options,
@@ -922,17 +862,15 @@ const animateMapZoomAroundPoint = (
 
     const progress = clamp((timestamp - startTime) / duration, 0, 1);
     const easedProgress = easeInOutCubic(progress);
-    const zoom =
-      fromState.zoom + (toState.zoom - fromState.zoom) * easedProgress;
+    const zoom = fromState.zoom + (toState.zoom - fromState.zoom) * easedProgress;
     const ratio = {
       x: fromRatio.x + (toRatio.x - fromRatio.x) * easedProgress,
       y: fromRatio.y + (toRatio.y - fromRatio.y) * easedProgress,
     };
 
-    setMapViewState(
-      getMapViewStateForPointRatio(focalPoint, zoom, ratio),
-      { clampCenter: false },
-    );
+    setMapViewState(getMapViewStateForPointRatio(focalPoint, zoom, ratio), {
+      clampCenter: false,
+    });
 
     if (progress < 1) {
       revealZoomAnimationFrame = window.requestAnimationFrame(step);
@@ -1065,13 +1003,8 @@ const getRandomCountry = (excludedCountryId?: string) => {
 };
 
 const getConfiguredRoundCount = () => {
-  const numericRoundCount =
-    Number(roundCountSetting.value) || defaultRoundCount;
-  const clampedRoundCount = clamp(
-    Math.round(numericRoundCount),
-    1,
-    maximumRoundCount.value,
-  );
+  const numericRoundCount = Number(roundCountSetting.value) || defaultRoundCount;
+  const clampedRoundCount = clamp(Math.round(numericRoundCount), 1, maximumRoundCount.value);
 
   roundCountSetting.value = clampedRoundCount;
 
@@ -1144,9 +1077,7 @@ function recordSoloRoundCountry(round: number, country: CountryPath) {
   }
 
   soloRoundCountries.value.push(roundCountry);
-  soloRoundCountries.value.sort(
-    (firstRound, secondRound) => firstRound.round - secondRound.round,
-  );
+  soloRoundCountries.value.sort((firstRound, secondRound) => firstRound.round - secondRound.round);
 }
 
 function resolveSoloRound(
@@ -1155,11 +1086,7 @@ function resolveSoloRound(
   delay: number,
   outcome: RoundPerformanceOutcome = isCorrect ? "correct" : "incorrect",
 ) {
-  if (
-    !currentCountry.value ||
-    isRoundLocked.value ||
-    gamePhase.value !== "playing"
-  ) {
+  if (!currentCountry.value || isRoundLocked.value || gamePhase.value !== "playing") {
     return;
   }
 
@@ -1181,11 +1108,7 @@ function resolveSoloRound(
 }
 
 function handleSoloRoundTimeout() {
-  if (
-    !currentCountry.value ||
-    isRoundLocked.value ||
-    gamePhase.value !== "playing"
-  ) {
+  if (!currentCountry.value || isRoundLocked.value || gamePhase.value !== "playing") {
     return;
   }
 
@@ -1286,7 +1209,7 @@ function resetSoloSetup() {
   feedbackMessage.value = "Configure a game to begin.";
 }
 
-const requestJson = async <T,>(url: string, body?: Record<string, unknown>) => {
+const requestJson = async <T>(url: string, body?: Record<string, unknown>) => {
   const response = await fetch(url, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -1325,11 +1248,7 @@ function applyRoomState(
   selectedMode.value = "multiplayer";
   totalRounds.value = room.roundCount;
   gamePhase.value =
-    room.status === "playing"
-      ? "playing"
-      : room.status === "results"
-        ? "results"
-        : "setup";
+    room.status === "playing" ? "playing" : room.status === "results" ? "results" : "setup";
   multiplayerErrorMessage.value = "";
 
   const self = room.players.find((player) => player.id === room.playerId);
@@ -1378,10 +1297,7 @@ function connectRoomEvents(roomCode: string, playerId: string) {
   });
 
   source.onerror = () => {
-    if (
-      roomState.value?.roomCode === normalizedRoomCode &&
-      roomState.value.playerId === playerId
-    ) {
+    if (roomState.value?.roomCode === normalizedRoomCode && roomState.value.playerId === playerId) {
       roomConnectionState.value = navigator.onLine ? "reconnecting" : "offline";
     }
   };
@@ -1412,26 +1328,17 @@ async function syncCurrentRoomState() {
       `/api/multiplayer/rooms/${encodeURIComponent(roomCode)}?playerId=${encodeURIComponent(playerId)}`,
     );
 
-    if (
-      roomState.value?.roomCode !== roomCode ||
-      roomState.value.playerId !== playerId
-    ) {
+    if (roomState.value?.roomCode !== roomCode || roomState.value.playerId !== playerId) {
       return;
     }
 
     applyRoomState(response.room);
 
-    if (
-      !roomEvents.value ||
-      roomEvents.value.readyState === EventSource.CLOSED
-    ) {
+    if (!roomEvents.value || roomEvents.value.readyState === EventSource.CLOSED) {
       connectRoomEvents(response.room.roomCode, response.room.playerId);
     }
   } catch {
-    if (
-      roomState.value?.roomCode === roomCode &&
-      roomState.value.playerId === playerId
-    ) {
+    if (roomState.value?.roomCode === roomCode && roomState.value.playerId === playerId) {
       roomConnectionState.value = navigator.onLine ? "reconnecting" : "offline";
     }
   } finally {
@@ -1459,8 +1366,7 @@ function checkRoomConnectionHealth() {
     lastRoomEventAt.value = currentTime;
   }
 
-  const isConnectionStale =
-    currentTime - lastRoomEventAt.value > roomConnectionStaleMilliseconds;
+  const isConnectionStale = currentTime - lastRoomEventAt.value > roomConnectionStaleMilliseconds;
   const shouldSyncExpiredRound =
     room.status === "playing" &&
     !room.roundLocked &&
@@ -1470,10 +1376,7 @@ function checkRoomConnectionHealth() {
   if (isConnectionStale) {
     roomConnectionState.value = "reconnecting";
 
-    if (
-      currentTime - lastRoomReconnectAttemptAt.value >
-      roomReconnectCooldownMilliseconds
-    ) {
+    if (currentTime - lastRoomReconnectAttemptAt.value > roomReconnectCooldownMilliseconds) {
       lastRoomReconnectAttemptAt.value = currentTime;
       connectRoomEvents(room.roomCode, room.playerId);
     }
@@ -1496,14 +1399,10 @@ function showJoinRoomFromPath(roomCode: string, message?: string) {
   multiplayerRoomCodeInput.value = normalizeRoomCode(roomCode);
   gamePhase.value = "setup";
   multiplayerErrorMessage.value =
-    message ??
-    `Room ${normalizeRoomCode(roomCode)} is ready. Enter your name to join.`;
+    message ?? `Room ${normalizeRoomCode(roomCode)} is ready. Enter your name to join.`;
 }
 
-async function restoreServerRoomFromRoute(
-  roomCode: string,
-  explicitPlayerId: string | null,
-) {
+async function restoreServerRoomFromRoute(roomCode: string, explicitPlayerId: string | null) {
   const normalizedRoomCode = normalizeRoomCode(roomCode);
   const storedSession = getStoredMultiplayerSession(normalizedRoomCode);
   const playerId = explicitPlayerId ?? storedSession?.playerId ?? null;
@@ -1513,10 +1412,7 @@ async function restoreServerRoomFromRoute(
     return;
   }
 
-  if (
-    roomState.value?.roomCode === normalizedRoomCode &&
-    roomState.value.playerId === playerId
-  ) {
+  if (roomState.value?.roomCode === normalizedRoomCode && roomState.value.playerId === playerId) {
     if (!roomEvents.value) {
       connectRoomEvents(normalizedRoomCode, playerId);
     }
@@ -1622,19 +1518,13 @@ async function createServerRoom() {
   multiplayerErrorMessage.value = "";
 
   try {
-    const response = await requestJson<MultiplayerApiResponse>(
-      "/api/multiplayer/rooms",
-      {
-        playerName: multiplayerPlayerName.value,
-        rounds: getConfiguredRoundCount(),
-      },
-    );
+    const response = await requestJson<MultiplayerApiResponse>("/api/multiplayer/rooms", {
+      playerName: multiplayerPlayerName.value,
+      rounds: getConfiguredRoundCount(),
+    });
 
     applyRoomState(response.room, { replacePath: false });
-    connectRoomEvents(
-      response.room.roomCode,
-      response.playerId ?? response.room.playerId,
-    );
+    connectRoomEvents(response.room.roomCode, response.playerId ?? response.room.playerId);
   } catch (error) {
     multiplayerErrorMessage.value =
       error instanceof Error ? error.message : "Could not create a room.";
@@ -1667,10 +1557,7 @@ async function joinServerRoom() {
     );
 
     applyRoomState(response.room, { replacePath: false });
-    connectRoomEvents(
-      response.room.roomCode,
-      response.playerId ?? response.room.playerId,
-    );
+    connectRoomEvents(response.room.roomCode, response.playerId ?? response.room.playerId);
   } catch (error) {
     multiplayerErrorMessage.value =
       error instanceof Error ? error.message : "Could not join the room.";
@@ -1753,12 +1640,9 @@ async function leaveServerRoom() {
   removeMultiplayerSession(room.roomCode);
 
   try {
-    await requestJson(
-      `/api/multiplayer/rooms/${encodeURIComponent(room.roomCode)}/leave`,
-      {
-        playerId: room.playerId,
-      },
-    );
+    await requestJson(`/api/multiplayer/rooms/${encodeURIComponent(room.roomCode)}/leave`, {
+      playerId: room.playerId,
+    });
   } catch {
     // The room may already be gone; leaving is best-effort from the client.
   }
@@ -1774,8 +1658,7 @@ const loadCountries = async () => {
 
     const data = (await response.json()) as CountryPathPayload;
     const loadedCountries = (data.countries ?? []).map((country, index) => {
-      const rawName =
-        typeof country.name === "string" ? country.name.trim() : "";
+      const rawName = typeof country.name === "string" ? country.name.trim() : "";
       const name = rawName || `Country ${index + 1}`;
       const rawId = typeof country.id === "string" ? country.id.trim() : "";
       const id = rawId || `${index}-${name}`;
@@ -1783,9 +1666,7 @@ const loadCountries = async () => {
 
       return { id, name, path };
     });
-    const countriesWithoutGeometry = loadedCountries.filter(
-      (country) => country.path.length === 0,
-    );
+    const countriesWithoutGeometry = loadedCountries.filter((country) => country.path.length === 0);
 
     if (loadedCountries.length === 0) {
       throw new Error("No country data was found in the map data.");
@@ -1799,8 +1680,7 @@ const loadCountries = async () => {
 
     countries.value = loadedCountries;
   } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "Could not load the map.";
+    errorMessage.value = error instanceof Error ? error.message : "Could not load the map.";
   } finally {
     isLoading.value = false;
   }
@@ -1881,11 +1761,7 @@ const setZoom = (nextZoom: number, focalPoint?: MapPoint) => {
   mapCenter.value = getClampedCenter(nextCenter, clampedZoom);
 };
 
-const setZoomFromClientAnchor = (
-  nextZoom: number,
-  focalPoint: MapPoint,
-  clientPoint: MapPoint,
-) => {
+const setZoomFromClientAnchor = (nextZoom: number, focalPoint: MapPoint, clientPoint: MapPoint) => {
   const clampedZoom = clamp(nextZoom, minimumMapZoom, maximumMapZoom);
   const clientRatio = getClientPointRatio(clientPoint);
 
@@ -1930,15 +1806,9 @@ const handleMapWheel = (event: WheelEvent) => {
 };
 
 const getPointerDistance = (firstPointer: MapPoint, secondPointer: MapPoint) =>
-  Math.hypot(
-    firstPointer.x - secondPointer.x,
-    firstPointer.y - secondPointer.y,
-  );
+  Math.hypot(firstPointer.x - secondPointer.x, firstPointer.y - secondPointer.y);
 
-const getPointerMidpoint = (
-  firstPointer: MapPoint,
-  secondPointer: MapPoint,
-) => ({
+const getPointerMidpoint = (firstPointer: MapPoint, secondPointer: MapPoint) => ({
   x: (firstPointer.x + secondPointer.x) / 2,
   y: (firstPointer.y + secondPointer.y) / 2,
 });
@@ -1954,8 +1824,7 @@ const getActiveMapPointerPair = (): [MapPoint, MapPoint] | null => {
 };
 
 const captureMapPointer = (event: PointerEvent) => {
-  const captureTarget =
-    event.target instanceof Element ? event.target : mapSvg.value;
+  const captureTarget = event.target instanceof Element ? event.target : mapSvg.value;
 
   if (!captureTarget) {
     return;
@@ -1981,10 +1850,7 @@ const releaseMapPointer = (event: PointerEvent) => {
   }
 };
 
-const startPanningFromPoint = (
-  clientPoint: MapPoint,
-  preserveDragState = false,
-) => {
+const startPanningFromPoint = (clientPoint: MapPoint, preserveDragState = false) => {
   const svg = mapSvg.value;
 
   if (!svg) {
@@ -2051,10 +1917,7 @@ const updatePinchGesture = () => {
   }
 
   const [firstPointer, secondPointer] = pointerPair;
-  const currentDistance = Math.max(
-    getPointerDistance(firstPointer, secondPointer),
-    1,
-  );
+  const currentDistance = Math.max(getPointerDistance(firstPointer, secondPointer), 1);
   const currentCenter = getPointerMidpoint(firstPointer, secondPointer);
   const centerDelta = getPointerDistance(currentCenter, gesture.centerClient);
 
@@ -2187,11 +2050,7 @@ const handleCountryGuess = (country: CountryPath) => {
     return;
   }
 
-  if (
-    !currentCountry.value ||
-    isRoundLocked.value ||
-    gamePhase.value !== "playing"
-  ) {
+  if (!currentCountry.value || isRoundLocked.value || gamePhase.value !== "playing") {
     return;
   }
 
@@ -2215,11 +2074,7 @@ const skipCountry = () => {
     return;
   }
 
-  if (
-    !currentCountry.value ||
-    isRoundLocked.value ||
-    gamePhase.value !== "playing"
-  ) {
+  if (!currentCountry.value || isRoundLocked.value || gamePhase.value !== "playing") {
     return;
   }
 
@@ -2341,27 +2196,19 @@ onUnmounted(() => {
         </header>
 
         <div class="mode-grid" role="radiogroup" aria-label="Game mode">
-          <label
-            class="mode-card"
-            :class="{ 'mode-card--active': selectedMode === 'solo' }"
-          >
+          <label class="mode-card" :class="{ 'mode-card--active': selectedMode === 'solo' }">
             <input v-model="selectedMode" type="radio" value="solo" />
             <span class="mode-title">Solo</span>
             <span class="mode-description">
-              A focused {{ defaultRoundCount }} round challenge against the
-              timer.
+              A focused {{ defaultRoundCount }} round challenge against the timer.
             </span>
           </label>
 
-          <label
-            class="mode-card"
-            :class="{ 'mode-card--active': selectedMode === 'multiplayer' }"
-          >
+          <label class="mode-card" :class="{ 'mode-card--active': selectedMode === 'multiplayer' }">
             <input v-model="selectedMode" type="radio" value="multiplayer" />
             <span class="mode-title">Multiplayer</span>
             <span class="mode-description">
-              Create or join a live room. Everyone guesses the same country at
-              the same time.
+              Create or join a live room. Everyone guesses the same country at the same time.
             </span>
           </label>
         </div>
@@ -2377,8 +2224,8 @@ onUnmounted(() => {
               inputmode="numeric"
             />
             <small>
-              Default is {{ defaultRoundCount }} rounds; choose up to
-              {{ maximumRoundCount }} to include every loaded country.
+              Default is {{ defaultRoundCount }} rounds; choose up to {{ maximumRoundCount }} to
+              include every loaded country.
             </small>
           </label>
 
@@ -2388,34 +2235,20 @@ onUnmounted(() => {
             <small>The countdown is fixed for every round.</small>
           </div>
 
-          <div
-            v-if="selectedMode === 'multiplayer'"
-            class="setting-field setting-field--static"
-          >
+          <div v-if="selectedMode === 'multiplayer'" class="setting-field setting-field--static">
             <span>Players</span>
-            <strong
-              >{{ minimumMultiplayerPlayerCount }}–{{
-                maximumPlayerCount
-              }}</strong
-            >
+            <strong>{{ minimumMultiplayerPlayerCount }}–{{ maximumPlayerCount }}</strong>
             <small
-              >Rooms start after at least
-              {{ minimumMultiplayerPlayerCount }} players join.</small
+              >Rooms start after at least {{ minimumMultiplayerPlayerCount }} players join.</small
             >
           </div>
         </div>
 
         <div v-if="selectedMode === 'solo'" class="setup-actions">
-          <button class="start-button" type="button" @click="startSoloGame">
-            Start solo game
-          </button>
+          <button class="start-button" type="button" @click="startSoloGame">Start solo game</button>
         </div>
 
-        <section
-          v-else
-          class="server-setup"
-          aria-labelledby="server-multiplayer-heading"
-        >
+        <section v-else class="server-setup" aria-labelledby="server-multiplayer-heading">
           <div class="server-setup-header">
             <div>
               <p class="eyebrow">Multiplayer</p>
@@ -2425,8 +2258,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 :class="{
-                  'segmented-control__button--active':
-                    multiplayerSetupAction === 'create',
+                  'segmented-control__button--active': multiplayerSetupAction === 'create',
                 }"
                 @click="multiplayerSetupAction = 'create'"
               >
@@ -2435,8 +2267,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 :class="{
-                  'segmented-control__button--active':
-                    multiplayerSetupAction === 'join',
+                  'segmented-control__button--active': multiplayerSetupAction === 'join',
                 }"
                 @click="multiplayerSetupAction = 'join'"
               >
@@ -2456,10 +2287,7 @@ onUnmounted(() => {
               />
             </label>
 
-            <label
-              v-if="multiplayerSetupAction === 'join'"
-              class="player-name-field"
-            >
+            <label v-if="multiplayerSetupAction === 'join'" class="player-name-field">
               <span>Room code</span>
               <input
                 v-model="multiplayerRoomCodeInput"
@@ -2508,8 +2336,7 @@ onUnmounted(() => {
             <p class="eyebrow">Multiplayer lobby</p>
             <h2 id="lobby-heading">Room {{ roomState.roomCode }}</h2>
             <p class="setup-copy">
-              {{ displayFeedbackMessage }} The match will run
-              {{ roomState.roundCount }} rounds with
+              {{ displayFeedbackMessage }} The match will run {{ roomState.roundCount }} rounds with
               {{ roomState.roundDurationSeconds }} seconds each.
             </p>
           </div>
@@ -2540,11 +2367,7 @@ onUnmounted(() => {
         <p v-if="multiplayerErrorMessage" class="server-error" role="alert">
           {{ multiplayerErrorMessage }}
         </p>
-        <p
-          v-if="multiplayerConnectionMessage"
-          class="server-warning"
-          role="status"
-        >
+        <p v-if="multiplayerConnectionMessage" class="server-warning" role="status">
           {{ multiplayerConnectionMessage }}
         </p>
 
@@ -2559,11 +2382,7 @@ onUnmounted(() => {
             {{ roomState.canStart ? "Start match" : "Waiting for players" }}
           </button>
           <span v-else class="waiting-pill">Waiting for host</span>
-          <button
-            class="secondary-button"
-            type="button"
-            @click="leaveServerRoom"
-          >
+          <button class="secondary-button" type="button" @click="leaveServerRoom">
             Leave room
           </button>
         </div>
@@ -2573,17 +2392,10 @@ onUnmounted(() => {
         <header class="game-header">
           <div class="prompt-card" aria-live="polite">
             <p class="eyebrow">
-              {{
-                isServerMultiplayerActive
-                  ? "Multiplayer challenge"
-                  : "World map challenge"
-              }}
+              {{ isServerMultiplayerActive ? "Multiplayer challenge" : "World map challenge" }}
             </p>
             <h2>
-              <span
-                v-if="isServerMultiplayerActive && multiplayerSelf"
-                class="active-player-name"
-              >
+              <span v-if="isServerMultiplayerActive && multiplayerSelf" class="active-player-name">
                 {{ multiplayerSelf.name }}:
               </span>
               Click
@@ -2617,11 +2429,7 @@ onUnmounted(() => {
             <p v-if="multiplayerErrorMessage" class="server-error" role="alert">
               {{ multiplayerErrorMessage }}
             </p>
-            <p
-              v-if="multiplayerConnectionMessage"
-              class="server-warning"
-              role="status"
-            >
+            <p v-if="multiplayerConnectionMessage" class="server-warning" role="status">
               {{ multiplayerConnectionMessage }}
             </p>
           </div>
@@ -2646,18 +2454,10 @@ onUnmounted(() => {
           </dl>
 
           <div class="game-actions">
-            <button
-              type="button"
-              :disabled="isMapGuessingDisabled"
-              @click="skipCountry"
-            >
+            <button type="button" :disabled="isMapGuessingDisabled" @click="skipCountry">
               {{ isServerMultiplayerActive ? "Skip round" : "Skip" }}
             </button>
-            <button
-              v-if="!isServerMultiplayerActive"
-              type="button"
-              @click="resetGame"
-            >
+            <button v-if="!isServerMultiplayerActive" type="button" @click="resetGame">
               Reset
             </button>
             <button
@@ -2669,11 +2469,7 @@ onUnmounted(() => {
             >
               {{ isRoomSyncInFlight ? "Syncing…" : "Resync" }}
             </button>
-            <button
-              class="secondary-button"
-              type="button"
-              @click="returnToSetup"
-            >
+            <button class="secondary-button" type="button" @click="returnToSetup">
               {{ isServerMultiplayerActive ? "Leave room" : "Setup" }}
             </button>
           </div>
@@ -2702,10 +2498,7 @@ onUnmounted(() => {
                     : "Guessing"
               }}
             </span>
-            <strong
-              class="player-name-tag"
-              :class="getPlayerRoundGlintClass(player)"
-            >
+            <strong class="player-name-tag" :class="getPlayerRoundGlintClass(player)">
               {{ player.name }}
             </strong>
             <span>{{ player.score }} pts</span>
@@ -2733,14 +2526,10 @@ onUnmounted(() => {
             >
               +
             </button>
-            <button class="zoom-reset" type="button" @click="resetZoom">
-              Reset zoom
-            </button>
+            <button class="zoom-reset" type="button" @click="resetZoom">Reset zoom</button>
           </div>
 
-          <p class="map-touch-hint" aria-hidden="true">
-            Pinch to zoom · Drag to move
-          </p>
+          <p class="map-touch-hint" aria-hidden="true">Pinch to zoom · Drag to move</p>
 
           <svg
             ref="mapSvg"
@@ -2764,11 +2553,9 @@ onUnmounted(() => {
               class="country"
               :class="{
                 'country--correct':
-                  displaySelectedCountryId === country.id &&
-                  displayAnswerState === 'correct',
+                  displaySelectedCountryId === country.id && displayAnswerState === 'correct',
                 'country--incorrect':
-                  displaySelectedCountryId === country.id &&
-                  displayAnswerState === 'incorrect',
+                  displaySelectedCountryId === country.id && displayAnswerState === 'incorrect',
                 'country--missed-target': missedTargetCountryId === country.id,
               }"
               :d="country.path"
@@ -2786,19 +2573,15 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <section
-        v-else
-        class="results-panel"
-        aria-labelledby="leaderboard-heading"
-      >
+      <section v-else class="results-panel" aria-labelledby="leaderboard-heading">
         <div class="results-copy">
           <p class="eyebrow">Final leaderboard</p>
           <h2 id="leaderboard-heading">Game over</h2>
           <p>
             {{ displayPlayers.length }}
             {{ displayPlayers.length === 1 ? "player" : "players" }} completed
-            {{ displayRoundCount }} timed rounds with
-            {{ displayRoundDurationSeconds }} seconds on the clock.
+            {{ displayRoundCount }} timed rounds with {{ displayRoundDurationSeconds }} seconds on
+            the clock.
           </p>
         </div>
 
@@ -2813,8 +2596,7 @@ onUnmounted(() => {
             <span class="leaderboard-player">
               <strong>{{ player.name }}</strong>
               <small>
-                {{ player.attempts }} turns ·
-                {{ player.accuracyLabel }} accuracy
+                {{ player.attempts }} turns · {{ player.accuracyLabel }} accuracy
                 <template v-if="player.isHost"> · Host</template>
               </small>
             </span>
@@ -2825,10 +2607,7 @@ onUnmounted(() => {
           </li>
         </ol>
 
-        <section
-          class="performance-chart"
-          aria-labelledby="performance-chart-heading"
-        >
+        <section class="performance-chart" aria-labelledby="performance-chart-heading">
           <div class="performance-chart-header">
             <div>
               <p class="eyebrow">Round-by-round</p>
@@ -2894,19 +2673,12 @@ onUnmounted(() => {
                     </span>
                     <small>{{ player.score }}/{{ displayRoundCount }}</small>
                   </th>
-                  <td
-                    v-for="column in performanceColumns"
-                    :key="`${player.id}-${column.round}`"
-                  >
+                  <td v-for="column in performanceColumns" :key="`${player.id}-${column.round}`">
                     <span
                       class="performance-cell"
                       :class="`performance-cell--${getRoundPerformance(player, column.round).outcome}`"
-                      :title="
-                        getRoundPerformance(player, column.round).ariaLabel
-                      "
-                      :aria-label="
-                        getRoundPerformance(player, column.round).ariaLabel
-                      "
+                      :title="getRoundPerformance(player, column.round).ariaLabel"
+                      :aria-label="getRoundPerformance(player, column.round).ariaLabel"
                     >
                       {{ getRoundPerformance(player, column.round).symbol }}
                     </span>
@@ -2920,11 +2692,7 @@ onUnmounted(() => {
         <p v-if="multiplayerErrorMessage" class="server-error" role="alert">
           {{ multiplayerErrorMessage }}
         </p>
-        <p
-          v-if="multiplayerConnectionMessage"
-          class="server-warning"
-          role="status"
-        >
+        <p v-if="multiplayerConnectionMessage" class="server-warning" role="status">
           {{ multiplayerConnectionMessage }}
         </p>
 
@@ -2954,16 +2722,8 @@ onUnmounted(() => {
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 24px;
   background:
-    radial-gradient(
-      circle at 15% 20%,
-      rgba(125, 211, 252, 0.35),
-      transparent 30%
-    ),
-    linear-gradient(
-      135deg,
-      rgba(248, 250, 252, 0.92),
-      rgba(226, 232, 240, 0.86)
-    );
+    radial-gradient(circle at 15% 20%, rgba(125, 211, 252, 0.35), transparent 30%),
+    linear-gradient(135deg, rgba(248, 250, 252, 0.92), rgba(226, 232, 240, 0.86));
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.18);
 }
 
@@ -3554,22 +3314,12 @@ button:disabled:focus-visible {
 }
 
 .player-name-tag--correct-glint::after {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(34, 197, 94, 0.95),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, rgba(34, 197, 94, 0.95), transparent);
   animation: player-name-glint 1.05s ease-out both;
 }
 
 .player-name-tag--incorrect-glint::after {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(239, 68, 68, 0.95),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.95), transparent);
   animation: player-name-glint 1.05s ease-out both;
 }
 
@@ -3749,11 +3499,7 @@ button:disabled:focus-visible {
 .leaderboard-row--winner {
   border-color: rgba(234, 88, 12, 0.55);
   background:
-    linear-gradient(
-      135deg,
-      rgba(255, 247, 237, 0.92),
-      rgba(255, 255, 255, 0.88)
-    ),
+    linear-gradient(135deg, rgba(255, 247, 237, 0.92), rgba(255, 255, 255, 0.88)),
     rgba(255, 255, 255, 0.82);
 }
 

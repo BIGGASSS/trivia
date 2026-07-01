@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Plugin } from "vite";
+import type { Plugin } from "vite-plus";
 
 const maximumPlayerCount = 5;
 const minimumPlayerCount = 2;
@@ -12,9 +12,7 @@ const revealDelayMilliseconds = 2600;
 const sseHeartbeatMilliseconds = 3000;
 const roomCodeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const countriesMapRoute = "/countries.paths.json";
-const countriesMapPath = fileURLToPath(
-  new URL("../public/countries.paths.json", import.meta.url),
-);
+const countriesMapPath = fileURLToPath(new URL("../public/countries.paths.json", import.meta.url));
 
 interface CountrySummary {
   id: string;
@@ -138,8 +136,7 @@ const loadCountries = async () => {
 
       return (data.countries ?? [])
         .map((country, index) => {
-          const rawName =
-            typeof country.name === "string" ? country.name.trim() : "";
+          const rawName = typeof country.name === "string" ? country.name.trim() : "";
           const name = rawName || `Country ${index + 1}`;
           const rawId = typeof country.id === "string" ? country.id.trim() : "";
           const id = rawId || `${index}-${name}`;
@@ -208,22 +205,14 @@ const readJsonBody = async (request: IncomingMessage) => {
   }
 };
 
-const sendJson = (
-  response: ServerResponse,
-  statusCode: number,
-  payload: unknown,
-) => {
+const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.writeHead(statusCode, {
     "Content-Type": "application/json",
   });
   response.end(JSON.stringify(payload));
 };
 
-const sendError = (
-  response: ServerResponse,
-  statusCode: number,
-  message: string,
-) => {
+const sendError = (response: ServerResponse, statusCode: number, message: string) => {
   sendJson(response, statusCode, { error: message });
 };
 
@@ -248,11 +237,7 @@ const handleCountriesMapMiddleware = (
       response.end(contents);
     })
     .catch((error) => {
-      sendError(
-        response,
-        500,
-        error instanceof Error ? error.message : "Could not load map data.",
-      );
+      sendError(response, 500, error instanceof Error ? error.message : "Could not load map data.");
     });
 };
 
@@ -295,9 +280,7 @@ const recordRoundPerformance = (
   }
 
   player.roundPerformance.push(roundPerformance);
-  player.roundPerformance.sort(
-    (firstRound, secondRound) => firstRound.round - secondRound.round,
-  );
+  player.roundPerformance.sort((firstRound, secondRound) => firstRound.round - secondRound.round);
 };
 
 const recordRoundCountry = (room: MultiplayerRoom, country: CountrySummary) => {
@@ -317,17 +300,11 @@ const recordRoundCountry = (room: MultiplayerRoom, country: CountrySummary) => {
   }
 
   room.roundCountries.push(roundCountry);
-  room.roundCountries.sort(
-    (firstRound, secondRound) => firstRound.round - secondRound.round,
-  );
+  room.roundCountries.sort((firstRound, secondRound) => firstRound.round - secondRound.round);
 };
 
-const serializeRoom = (
-  room: MultiplayerRoom,
-  playerId: string,
-): PublicRoomState => {
-  const isRoundLocked =
-    room.status === "playing" && room.revealCountryId !== null;
+const serializeRoom = (room: MultiplayerRoom, playerId: string): PublicRoomState => {
+  const isRoundLocked = room.status === "playing" && room.revealCountryId !== null;
   const ownPlayer = getPlayer(room, playerId);
 
   return {
@@ -340,10 +317,8 @@ const serializeRoom = (
     roundCount: room.roundCount,
     currentRound: room.currentRound,
     roundDurationSeconds,
-    roundEndsAt:
-      room.status === "playing" && !isRoundLocked ? room.roundEndsAt : null,
-    currentCountryName:
-      room.status === "playing" ? (room.currentCountry?.name ?? null) : null,
+    roundEndsAt: room.status === "playing" && !isRoundLocked ? room.roundEndsAt : null,
+    currentCountryName: room.status === "playing" ? (room.currentCountry?.name ?? null) : null,
     revealCountryId: isRoundLocked ? room.revealCountryId : null,
     roundLocked: isRoundLocked,
     canStart:
@@ -367,9 +342,7 @@ const serializeRoom = (
 
 const sendSseState = (client: RoomClient, room: MultiplayerRoom) => {
   client.response.write("event: state\n");
-  client.response.write(
-    `data: ${JSON.stringify(serializeRoom(room, client.playerId))}\n\n`,
-  );
+  client.response.write(`data: ${JSON.stringify(serializeRoom(room, client.playerId))}\n\n`);
 };
 
 const sendSseHeartbeat = (response: ServerResponse) => {
@@ -381,9 +354,7 @@ const updateConnectionFlags = (room: MultiplayerRoom) => {
   const clients = roomClients.get(room.code) ?? new Set<RoomClient>();
 
   for (const player of room.players) {
-    player.connected = Array.from(clients).some(
-      (client) => client.playerId === player.id,
-    );
+    player.connected = Array.from(clients).some((client) => client.playerId === player.id);
   }
 };
 
@@ -409,9 +380,7 @@ const chooseCountry = async (room: MultiplayerRoom) => {
     throw new Error("No country data is available for multiplayer games.");
   }
 
-  let availableCountries = countries.filter(
-    (country) => !room.usedCountryIds.has(country.id),
-  );
+  let availableCountries = countries.filter((country) => !room.usedCountryIds.has(country.id));
 
   if (availableCountries.length === 0) {
     room.usedCountryIds.clear();
@@ -584,10 +553,7 @@ const joinRoom = (room: MultiplayerRoom, body: RequestBody) => {
   }
 
   const playerId = randomUUID();
-  const playerName = sanitizePlayerName(
-    body.playerName,
-    `Player ${room.players.length + 1}`,
-  );
+  const playerName = sanitizePlayerName(body.playerName, `Player ${room.players.length + 1}`);
 
   room.players.push({
     id: playerId,
@@ -614,9 +580,7 @@ const leaveRoom = (room: MultiplayerRoom, playerId: string) => {
   }
 
   if (room.status === "lobby") {
-    room.players = room.players.filter(
-      (roomPlayer) => roomPlayer.id !== playerId,
-    );
+    room.players = room.players.filter((roomPlayer) => roomPlayer.id !== playerId);
 
     if (room.players.length === 0) {
       clearRoomTimers(room);
@@ -629,19 +593,13 @@ const leaveRoom = (room: MultiplayerRoom, playerId: string) => {
   }
 
   if (room.hostId === playerId) {
-    room.hostId =
-      room.players.find((roomPlayer) => roomPlayer.id !== playerId)?.id ??
-      room.hostId;
+    room.hostId = room.players.find((roomPlayer) => roomPlayer.id !== playerId)?.id ?? room.hostId;
   }
 
   broadcastRoom(room);
 };
 
-const submitAnswer = async (
-  room: MultiplayerRoom,
-  playerId: string,
-  countryId: string | null,
-) => {
+const submitAnswer = async (room: MultiplayerRoom, playerId: string, countryId: string | null) => {
   if (room.status !== "playing" || !room.currentCountry) {
     throw new Error("This room is not currently accepting guesses.");
   }
@@ -701,10 +659,7 @@ const submitAnswer = async (
   }
 };
 
-const handleCreateRoom = async (
-  request: IncomingMessage,
-  response: ServerResponse,
-) => {
+const handleCreateRoom = async (request: IncomingMessage, response: ServerResponse) => {
   const body = await readJsonBody(request);
   const { room, playerId } = await createRoom(body);
 
@@ -736,11 +691,7 @@ const handleJoinRoom = async (
       room: serializeRoom(room, playerId),
     });
   } catch (error) {
-    sendError(
-      response,
-      400,
-      error instanceof Error ? error.message : "Could not join room.",
-    );
+    sendError(response, 400, error instanceof Error ? error.message : "Could not join room.");
   }
 };
 
@@ -773,11 +724,7 @@ const handleStartRoom = async (
     await startRoom(room);
     sendJson(response, 200, { room: serializeRoom(room, playerId) });
   } catch (error) {
-    sendError(
-      response,
-      500,
-      error instanceof Error ? error.message : "Could not start the room.",
-    );
+    sendError(response, 500, error instanceof Error ? error.message : "Could not start the room.");
   }
 };
 
@@ -800,11 +747,7 @@ const handleLeaveRoom = async (
     leaveRoom(room, playerId);
     sendJson(response, 200, { ok: true });
   } catch (error) {
-    sendError(
-      response,
-      400,
-      error instanceof Error ? error.message : "Could not leave room.",
-    );
+    sendError(response, 400, error instanceof Error ? error.message : "Could not leave room.");
   }
 };
 
@@ -823,26 +766,17 @@ const handleSubmitGuess = async (
 
   const body = await readJsonBody(request);
   const playerId = typeof body.playerId === "string" ? body.playerId : "";
-  const countryId =
-    !isSkip && typeof body.countryId === "string" ? body.countryId : null;
+  const countryId = !isSkip && typeof body.countryId === "string" ? body.countryId : null;
 
   try {
     await submitAnswer(room, playerId, countryId);
     sendJson(response, 200, { room: serializeRoom(room, playerId) });
   } catch (error) {
-    sendError(
-      response,
-      400,
-      error instanceof Error ? error.message : "Could not submit answer.",
-    );
+    sendError(response, 400, error instanceof Error ? error.message : "Could not submit answer.");
   }
 };
 
-const handleRoomState = (
-  response: ServerResponse,
-  roomCode: string,
-  url: URL,
-) => {
+const handleRoomState = (response: ServerResponse, roomCode: string, url: URL) => {
   const room = getRoom(roomCode);
 
   if (!room) {

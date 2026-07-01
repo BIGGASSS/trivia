@@ -4,17 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "run-s build:map type-check \"build-only {@}\" --",
-    "preview": "vite preview",
-    "test:unit": "vitest",
-    "build-only": "vite build",
+    "dev": "vp dev",
+    "build": "run-s --npm-path pnpm build:map type-check \"build-only {@}\" --",
+    "preview": "vp preview",
+    "test:unit": "vp test",
+    "build-only": "vp build",
     "build:map": "node scripts/build-country-paths.mjs",
     "type-check": "vue-tsc --build",
-    "lint": "run-s lint:*",
-    "lint:oxlint": "oxlint . --fix",
-    "lint:eslint": "eslint . --fix --cache",
-    "format": "prettier --write --experimental-cli src/"
+    "lint": "run-s --npm-path pnpm lint:*",
+    "lint:oxlint": "vp lint . --fix",
+    "lint:eslint": "vp lint . --fix",
+    "format": "vp fmt . --write"
   },
   "dependencies": {
     "vue": "^3.5.32"
@@ -24,23 +24,23 @@
     "@types/jsdom": "^28.0.1",
     "@types/node": "^24.12.2",
     "@vitejs/plugin-vue": "^6.0.6",
-    "@vitest/eslint-plugin": "^1.6.16",
-    "@vue/eslint-config-typescript": "^14.7.0",
     "@vue/test-utils": "^2.4.6",
     "@vue/tsconfig": "^0.9.1",
-    "eslint": "^10.2.1",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-oxlint": "~1.60.0",
-    "eslint-plugin-vue": "~10.8.0",
     "jiti": "^2.6.1",
     "jsdom": "^29.0.2",
     "npm-run-all2": "^8.0.4",
-    "oxlint": "~1.60.0",
-    "prettier": "3.8.3",
     "typescript": "~6.0.0",
-    "vite": "^8.0.8",
-    "vitest": "^4.1.4",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:",
     "vue-tsc": "^3.2.6"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.9.0",
+      "onFail": "download"
+    }
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

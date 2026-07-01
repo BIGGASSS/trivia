@@ -5,9 +5,7 @@ import WorldMap from "./components/WorldMap.vue";
 type AppView = "home" | "country-game";
 
 const getViewFromPath = (): AppView =>
-  window.location.pathname.startsWith("/country-game")
-    ? "country-game"
-    : "home";
+  window.location.pathname.startsWith("/country-game") ? "country-game" : "home";
 
 const currentView = ref<AppView>(getViewFromPath());
 
@@ -43,19 +41,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main
-    class="app-shell"
-    :class="{ 'app-shell--game': currentView === 'country-game' }"
-  >
+  <main class="app-shell" :class="{ 'app-shell--game': currentView === 'country-game' }">
     <section v-if="currentView === 'home'" class="home-page">
       <nav class="site-nav" aria-label="Main navigation">
         <a class="brand" href="#top" aria-label="World Trivia home">
           <span class="brand-mark">🌍</span>
           <span>World Trivia</span>
         </a>
-        <button class="nav-action" type="button" @click="startCountryGame">
-          Play now
-        </button>
+        <button class="nav-action" type="button" @click="startCountryGame">Play now</button>
       </nav>
 
       <div class="hero" id="top">
@@ -63,16 +56,12 @@ onUnmounted(() => {
           <p class="eyebrow">Geography minigames</p>
           <h1>Test how well you know the world.</h1>
           <p class="hero-description">
-            Jump into quick map challenges, learn country locations, and build a
-            streak as you explore the globe.
+            Jump into quick map challenges, learn country locations, and build a streak as you
+            explore the globe.
           </p>
 
           <div class="hero-actions">
-            <button
-              class="primary-action"
-              type="button"
-              @click="startCountryGame"
-            >
+            <button class="primary-action" type="button" @click="startCountryGame">
               Start country guessing
             </button>
             <a class="secondary-action" href="#games">View games</a>
@@ -102,9 +91,8 @@ onUnmounted(() => {
             <p class="card-kicker">Available now</p>
             <h3>Country Guessing Game</h3>
             <p>
-              The site prompts a random country. Click the correct country on
-              the border-only world map to score points and keep your streak
-              alive.
+              The site prompts a random country. Click the correct country on the border-only world
+              map to score points and keep your streak alive.
             </p>
           </div>
 
@@ -114,11 +102,7 @@ onUnmounted(() => {
             <li>Timed rounds and leaderboards</li>
           </ul>
 
-          <button
-            class="primary-action card-action"
-            type="button"
-            @click="startCountryGame"
-          >
+          <button class="primary-action card-action" type="button" @click="startCountryGame">
             Enter game
           </button>
         </article>
@@ -126,9 +110,7 @@ onUnmounted(() => {
     </section>
 
     <section v-else class="game-page" aria-label="Country guessing game">
-      <button class="back-button" type="button" @click="returnHome">
-        ← Back to homepage
-      </button>
+      <button class="back-button" type="button" @click="returnHome">← Back to homepage</button>
       <WorldMap />
     </section>
   </main>
@@ -139,16 +121,8 @@ onUnmounted(() => {
   min-height: 100vh;
   padding: clamp(1rem, 2.5vw, 2rem);
   background:
-    radial-gradient(
-      circle at top left,
-      rgba(59, 130, 246, 0.24),
-      transparent 34rem
-    ),
-    radial-gradient(
-      circle at bottom right,
-      rgba(249, 115, 22, 0.2),
-      transparent 30rem
-    ),
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.24), transparent 34rem),
+    radial-gradient(circle at bottom right, rgba(249, 115, 22, 0.2), transparent 30rem),
     linear-gradient(135deg, #eff6ff 0%, #f8fafc 46%, #fff7ed 100%);
 }
 
@@ -320,16 +294,8 @@ button:focus-visible,
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 36px;
   background:
-    linear-gradient(
-      135deg,
-      rgba(255, 255, 255, 0.82),
-      rgba(219, 234, 254, 0.72)
-    ),
-    radial-gradient(
-      circle at 20% 20%,
-      rgba(125, 211, 252, 0.45),
-      transparent 30%
-    );
+    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(219, 234, 254, 0.72)),
+    radial-gradient(circle at 20% 20%, rgba(125, 211, 252, 0.45), transparent 30%);
   box-shadow: 0 30px 80px rgba(15, 23, 42, 0.16);
 }
 
@@ -341,18 +307,8 @@ button:focus-visible,
   border: 10px solid rgba(255, 255, 255, 0.9);
   border-radius: 50%;
   background:
-    linear-gradient(
-      90deg,
-      transparent 48%,
-      rgba(15, 23, 42, 0.14) 49%,
-      transparent 51%
-    ),
-    linear-gradient(
-      0deg,
-      transparent 48%,
-      rgba(15, 23, 42, 0.14) 49%,
-      transparent 51%
-    ),
+    linear-gradient(90deg, transparent 48%, rgba(15, 23, 42, 0.14) 49%, transparent 51%),
+    linear-gradient(0deg, transparent 48%, rgba(15, 23, 42, 0.14) 49%, transparent 51%),
     radial-gradient(circle at 35% 32%, #7dd3fc 0 15%, transparent 16%), #38bdf8;
   box-shadow:
     inset -28px -32px 70px rgba(30, 41, 59, 0.24),
