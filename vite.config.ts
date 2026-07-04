@@ -98,7 +98,7 @@ export default defineConfig({
         },
       },
       {
-        files: ["src/**/__tests__/*"],
+        files: ["**/__tests__/*"],
         rules: {
           "vitest/expect-expect": "error",
           "vitest/no-commented-out-tests": "error",
@@ -136,6 +136,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@shared": fileURLToPath(new URL("./shared", import.meta.url)),
     },
   },
 });
