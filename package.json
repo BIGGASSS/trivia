@@ -9,15 +9,14 @@
     "preview": "vp preview",
     "test:unit": "vp test",
     "build-only": "vp build",
-    "build:map": "node scripts/build-country-paths.mjs",
+    "build:map": "node scripts/build-country-paths.ts",
     "type-check": "vue-tsc --build",
-    "lint": "run-s --npm-path pnpm lint:*",
-    "lint:oxlint": "vp lint . --fix",
-    "lint:eslint": "vp lint . --fix",
+    "lint": "vp lint . --fix",
     "format": "vp fmt . --write"
   },
   "dependencies": {
-    "vue": "^3.5.32"
+    "vue": "^3.5.32",
+    "vue-router": "^5.1.0"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
