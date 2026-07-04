@@ -181,7 +181,7 @@ const roomCodeInput = defineModel<string>("roomCodeInput", { required: true });
   transform: translateY(-1px);
 }
 
-.mode-card--active {
+.mode-card.mode-card--active {
   border-color: rgba(37, 99, 235, 0.85);
   box-shadow: 0 18px 42px rgba(37, 99, 235, 0.16);
 }
