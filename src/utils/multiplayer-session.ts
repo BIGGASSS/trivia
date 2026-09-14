@@ -9,6 +9,7 @@ import { normalizeRoomCode } from "@shared/game-utils";
 
 export interface StoredMultiplayerSession {
   playerId: string;
+  sessionToken: string;
   playerName: string;
   roomCode: string;
   updatedAt: number;
@@ -20,8 +21,14 @@ export const sessionTtlMilliseconds = 24 * 60 * 60 * 1000;
 type SessionRecord = Record<string, StoredMultiplayerSession>;
 
 const isSessionFresh = (session: StoredMultiplayerSession | undefined, now: number) =>
-  session !== undefined &&
+  session != null &&
+  typeof session.playerId === "string" &&
+  typeof session.sessionToken === "string" &&
+  session.sessionToken.length > 0 &&
+  typeof session.playerName === "string" &&
+  typeof session.roomCode === "string" &&
   typeof session.updatedAt === "number" &&
+  Number.isFinite(session.updatedAt) &&
   now - session.updatedAt <= sessionTtlMilliseconds;
 
 const writeSessions = (sessions: SessionRecord) => {
@@ -68,13 +75,18 @@ export const getStoredMultiplayerSession = (roomCode: string) =>
 export const saveMultiplayerSession = (session: StoredMultiplayerSession) => {
   const sessions = getStoredMultiplayerSessions();
 
-  sessions[normalizeRoomCode(session.roomCode)] = session;
+  const roomCode = normalizeRoomCode(session.roomCode);
+  sessions[roomCode] = { ...session, roomCode };
   writeSessions(sessions);
 };
 
-export const removeMultiplayerSession = (roomCode: string) => {
+export const removeMultiplayerSession = (roomCode: string, expectedSessionToken?: string) => {
   const sessions = getStoredMultiplayerSessions();
+  const key = normalizeRoomCode(roomCode);
+  // An older tab/request must not delete a replacement credential from another tab.
+  if (expectedSessionToken !== undefined && sessions[key]?.sessionToken !== expectedSessionToken)
+    return;
 
-  delete sessions[normalizeRoomCode(roomCode)];
+  delete sessions[key];
   writeSessions(sessions);
 };

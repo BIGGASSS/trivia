@@ -11,6 +11,7 @@ defineProps<{
   maximumRoundCount: number;
   errorMessage: string;
   isBusy: boolean;
+  canRetryRejoin?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -152,7 +153,7 @@ const roomCodeInput = defineModel<string>("roomCodeInput", { required: true });
           :disabled="isBusy"
           @click="emit('joinRoom')"
         >
-          {{ isBusy ? "Joining…" : "Join room" }}
+          {{ isBusy ? "Joining…" : canRetryRejoin ? "Retry rejoin" : "Join room" }}
         </button>
       </div>
     </section>

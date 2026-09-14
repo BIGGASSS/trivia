@@ -218,6 +218,13 @@
   transform: translateY(-1px);
 }
 
+.map-panel button:focus-visible,
+.map-panel input:focus-visible,
+.map-panel .mode-card:has(input:focus-visible) {
+  outline: 3px solid var(--color-ink);
+  outline-offset: 3px;
+}
+
 .map-panel button:disabled,
 .map-panel button:disabled:hover,
 .map-panel button:disabled:focus-visible {
@@ -274,6 +281,25 @@
 .map-panel .player-score-card span:last-child {
   color: var(--color-slate);
   font-weight: 900;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-panel button,
+  .map-panel .mode-card,
+  .map-panel .timer-track span {
+    transition: none;
+  }
+
+  .map-panel button:hover,
+  .map-panel button:focus-visible,
+  .map-panel .mode-card:hover,
+  .map-panel .mode-card:focus-within {
+    transform: none;
+  }
+
+  .map-panel .player-name-tag::after {
+    animation: none;
+  }
 }
 
 /* ---- responsive layout -------------------------------------------------- */

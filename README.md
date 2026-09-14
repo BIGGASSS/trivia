@@ -89,6 +89,28 @@ The dev and preview servers provide:
 - `POST /api/multiplayer/rooms/:roomCode/skip`
 - `POST /api/multiplayer/rooms/:roomCode/leave`
 
+### Multiplayer sessions and ordering
+
+Create/join responses include a private `sessionToken`, stored locally for rejoining.
+Player IDs and room codes are public identifiers, **not credentials**. Authenticated
+POST bodies require `sessionToken`; state/SSE GETs carry it in the `sessionToken`
+query parameter because native EventSource cannot set authorization headers. Never
+share these API URLs; use HTTPS and redact query credentials in proxy/access logs.
+Room links contain only the room code. Snapshots never include session tokens and
+API responses disable caching.
+
+Guesses/skips also require the current snapshot's `matchId` and `roundId`. The
+server scores synchronously, once per player/round and before the deadline.
+Snapshots carry increasing `revision` values so delayed HTTP/SSE responses cannot
+replace newer state. Navigation cancels local requests and subscriptions without
+leaving the membership; explicit leave revokes the session and every subscription.
+Departed players remain in match history but cannot answer or become host.
+
+Temporary rejoin failures retain credentials and offer **Retry rejoin** (also
+retried when the browser comes online). Missing rooms or invalid sessions clear
+only the affected credential. Legacy ID-only stored sessions cannot authenticate
+and are discarded; players must join again after this protocol update.
+
 ## Build and checks
 
 ```sh
@@ -96,15 +118,20 @@ vp run build  # build:map + type-check + Vite build
 vp test       # unit tests
 vp check      # format, lint, and type checks
 vp fmt        # format files
+vp exec playwright install chromium  # once, for browser tests
+vp run test:browser                  # builds, then runs Chromium tests
 ```
 
-Unit tests cover the shared utilities, the server room engine, the solo game
-engine, the map data build script, and app routing. Browser end-to-end tests
-are a possible follow-up.
+Tests cover shared utilities, the room engine, real HTTP/SSE authorization,
+concurrent answers, reconnects, snapshot ordering, route teardown, solo gameplay,
+and map data. Browser tests exercise actual mouse drag/wheel, mobile pinch,
+keyboard focus/guessing, and reduced motion in responsive SVG layouts. They serve
+built assets through Playwright request interception; **no dev or preview server
+is started**. Browser traces on failure are in `node_modules/.cache/playwright-results`.
 
 CI (`.github/workflows/ci.yml`) uses `setup-vp` to resolve the same pinned Node.js
-and pnpm versions, then runs `vp check`, `vp test`, and `vp run build` on every
-push to `master` and pull request.
+and pnpm versions, then runs checks, unit/integration tests, the build, and Chromium
+browser tests on every push to `master` and pull request.
 
 ## App routes
 
@@ -114,4 +141,4 @@ Routing uses `vue-router` (HTML5 history mode):
 - `/country-game` — game setup
 - `/country-game/solo` — solo game
 - `/country-game/multiplayer` — create/join multiplayer setup
-- `/country-game/multiplayer/:roomCode` — multiplayer room (an optional `?playerId=…` query rejoins a stored session)
+- `/country-game/multiplayer/:roomCode` — multiplayer room (rejoins using locally stored private credentials, never a player-ID query)

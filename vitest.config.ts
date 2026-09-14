@@ -1,11 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { mergeConfig, defineConfig } from "vite-plus";
+import { configDefaults } from "vite-plus/test/config";
 import viteConfig from "./vite.config";
 
 export default mergeConfig(
   viteConfig,
   defineConfig({
     test: {
+      exclude: [...configDefaults.exclude, "tests/browser/**"],
       environment: "jsdom",
       // Use jsdom's storage instead of Node's native Web Storage globals.
       execArgv: ["--no-experimental-webstorage"],

@@ -166,6 +166,56 @@ describe("useSoloGame", () => {
     expect(solo.feedbackMessage.value).toBe("Configure a game to begin.");
   });
 
+  it.each(["timer", "correct", "skipped"])(
+    "clears an abandoned %s round when resetting to setup",
+    (pending) => {
+      const { solo, gamePhase } = setup();
+      solo.roundCountSetting.value = 1;
+      solo.startGame();
+      if (pending === "correct") solo.handleGuess(solo.currentCountry.value as CountryPath);
+      if (pending === "skipped") solo.skip();
+
+      solo.resetToSetup();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(20_000);
+      expect(gamePhase.value).toBe("setup");
+      expect(solo.currentCountry.value).toBeNull();
+      expect(solo.soloCurrentRound.value).toBe(0);
+    },
+  );
+
+  it("does not finish a final delay after the shared game phase changes", () => {
+    const { solo, gamePhase } = setup();
+    solo.roundCountSetting.value = 1;
+    solo.startGame();
+    solo.handleGuess(solo.currentCountry.value as CountryPath);
+    gamePhase.value = "setup";
+
+    vi.advanceTimersByTime(900);
+    expect(gamePhase.value).toBe("setup");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("tears down idempotently and can start a fresh game", () => {
+    const { solo, gamePhase } = setup();
+    solo.roundCountSetting.value = 1;
+    solo.startGame();
+    solo.skip();
+    solo.teardown();
+    solo.teardown();
+    expect(vi.getTimerCount()).toBe(0);
+
+    solo.roundCountSetting.value = 2;
+    solo.startGame();
+    vi.advanceTimersByTime(3000);
+    expect(gamePhase.value).toBe("playing");
+    expect(solo.soloCurrentRound.value).toBe(1);
+    expect(solo.soloPlayer.value.attempts).toBe(0);
+    expect(solo.soloTimeLeft.value).toBe(7);
+    solo.teardown();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("ignores guesses while the round is locked", () => {
     const { solo } = setup();
 

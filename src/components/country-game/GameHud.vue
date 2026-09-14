@@ -136,7 +136,17 @@ const getPlayerRoundGlintClass = (player: Player) => {
       }"
     >
       <span class="player-turn-label">
-        {{ player.id === room.playerId ? "You" : player.hasAnswered ? "Answered" : "Guessing" }}
+        {{
+          !player.active
+            ? "Left"
+            : player.id === room.playerId
+              ? "You"
+              : player.hasAnswered
+                ? "Answered"
+                : player.connected
+                  ? "Guessing"
+                  : "Disconnected"
+        }}
       </span>
       <strong class="player-name-tag" :class="getPlayerRoundGlintClass(player)">
         {{ player.name }}

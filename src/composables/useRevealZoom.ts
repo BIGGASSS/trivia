@@ -221,6 +221,21 @@ export const useRevealZoom = (viewport: MapViewport, countries: Ref<CountryPath[
     const sequenceId = (revealZoomSequenceId += 1);
     revealZoomRestoreState = restoreState;
 
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      // Keep the missed country visible without a sweeping zoom animation.
+      // Restore just before the next round, or earlier if the reveal is cancelled.
+      setMapViewState(targetState, { clampCenter: false });
+      revealZoomHoldTimeout = window.setTimeout(() => {
+        revealZoomHoldTimeout = null;
+        if (sequenceId !== revealZoomSequenceId) {
+          return;
+        }
+        setMapViewState(restoreState);
+        revealZoomRestoreState = null;
+      }, missedCountryRevealRoundDelayMilliseconds - 200);
+      return true;
+    }
+
     const restoreOriginalView = () => {
       if (sequenceId !== revealZoomSequenceId) {
         return;

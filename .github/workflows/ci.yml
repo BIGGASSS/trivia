@@ -28,3 +28,9 @@ jobs:
 
       - name: Build
         run: vp run build
+
+      - name: Install Chromium
+        run: vp exec playwright install --with-deps chromium
+
+      - name: Browser tests (no server)
+        run: vp exec playwright test

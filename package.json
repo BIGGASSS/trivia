@@ -8,6 +8,7 @@
     "build": "run-s --npm-path pnpm build:map type-check \"build-only {@}\" --",
     "preview": "vp preview",
     "test:unit": "vp test",
+    "test:browser": "vp run build && playwright test",
     "build-only": "vp build",
     "build:map": "node scripts/build-country-paths.ts",
     "type-check": "vue-tsc --build",
@@ -19,6 +20,7 @@
     "vue-router": "^5.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tsconfig/node26": "^26.0.1",
     "@types/jsdom": "^28.0.1",
     "@types/node": "^26.5.1",

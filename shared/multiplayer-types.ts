@@ -30,6 +30,8 @@ export interface PublicPlayer {
   attempts: number;
   streak: number;
   isHost: boolean;
+  /** False after leaving; past match results may still include this player. */
+  active: boolean;
   connected: boolean;
   hasAnswered: boolean;
   roundPerformance: RoundPerformance[];
@@ -37,6 +39,10 @@ export interface PublicPlayer {
 
 export interface PublicRoomState {
   roomCode: string;
+  /** Monotonically increasing version shared by HTTP and SSE snapshots. */
+  revision: number;
+  matchId: string | null;
+  roundId: string | null;
   status: RoomStatus;
   hostId: string;
   playerId: string;
@@ -57,5 +63,7 @@ export interface PublicRoomState {
 
 export interface MultiplayerApiResponse {
   playerId?: string;
+  /** Private credential returned only by create/join, never in a room snapshot. */
+  sessionToken?: string;
   room: PublicRoomState;
 }

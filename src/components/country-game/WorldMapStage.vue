@@ -4,6 +4,7 @@ import type { AnswerState } from "@shared/multiplayer-types";
 import type { CountryPath } from "@/types/game";
 import { useMapViewport } from "@/composables/useMapViewport";
 import { useRevealZoom } from "@/composables/useRevealZoom";
+import { getLargestSubpathBounds } from "@/utils/svg-path-bounds";
 
 export interface RevealTarget {
   key: string;
@@ -78,7 +79,7 @@ watch(
 );
 
 const handleCountryGuess = (country: CountryPath) => {
-  if (consumeSuppressedClick()) {
+  if (props.guessingDisabled || consumeSuppressedClick()) {
     return;
   }
 
@@ -98,6 +99,47 @@ const getCountryTabIndex = (index: number) => {
   return index === focusedCountryIndex.value ? 0 : -1;
 };
 
+const handleCountryFocus = (index: number) => {
+  focusedCountryIndex.value = index;
+
+  // Pointer focus must not move the country out from under a click or drag.
+  if (props.guessingDisabled || isPanning.value || isPinchingMap.value) {
+    return;
+  }
+
+  const country = props.countries[index];
+  const bounds = country && getLargestSubpathBounds(country.path);
+  if (!bounds) {
+    return;
+  }
+
+  cancelRevealZoomAnimation();
+  const state = viewport.getCurrentMapViewState();
+  const { width, height } = viewport.getViewBoxSize(state.zoom);
+  const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  const visibleRatio = 0.8;
+
+  if (
+    Math.abs(center.x - state.center.x) + bounds.width / 2 <= (width * visibleRatio) / 2 &&
+    Math.abs(center.y - state.center.y) + bounds.height / 2 <= (height * visibleRatio) / 2
+  ) {
+    return;
+  }
+
+  // Reveal the mainland instantly, zooming out only if needed. This also
+  // works with reduced motion and does not depend on SVG getBBox support.
+  viewport.setMapViewState({
+    zoom:
+      state.zoom *
+      Math.min(
+        1,
+        (width * visibleRatio) / Math.max(bounds.width, 0.75),
+        (height * visibleRatio) / Math.max(bounds.height, 0.75),
+      ),
+    center,
+  });
+};
+
 const focusCountryAt = (index: number) => {
   const countryCount = props.countries.length;
 
@@ -112,11 +154,15 @@ const focusCountryAt = (index: number) => {
   void nextTick(() => {
     const paths = mapSvg.value?.querySelectorAll<SVGPathElement>(".country");
 
-    paths?.[nextIndex]?.focus();
+    paths?.[nextIndex]?.focus({ preventScroll: true });
   });
 };
 
 const handleCountryKeydown = (event: KeyboardEvent, country: CountryPath, index: number) => {
+  if (props.guessingDisabled) {
+    return;
+  }
+
   switch (event.key) {
     case "Enter":
     case " ": {
@@ -191,13 +237,14 @@ defineExpose({ resetZoom });
       :class="{ 'world-map--panning': isPanning || isPinchingMap }"
       :viewBox="mapViewBox"
       preserveAspectRatio="xMidYMid meet"
-      role="img"
+      role="group"
       aria-label="World map. Click the country named in the prompt. Use the zoom controls, mouse wheel, two-finger pinch, or drag to move around the map. With the keyboard, use the arrow keys to move between countries and Enter to guess."
       @wheel.prevent="handleMapWheel"
       @pointerdown="handleMapPointerDown"
       @pointermove.prevent="handleMapPointerMove"
       @pointerup="handleMapPointerEnd"
       @pointercancel="handleMapPointerEnd"
+      @lostpointercapture="handleMapPointerEnd"
     >
       <rect class="ocean" x="-180" y="-90" width="360" height="180" />
 
@@ -218,7 +265,7 @@ defineExpose({ resetZoom });
         :aria-label="`Guess ${country.name}`"
         :aria-disabled="guessingDisabled"
         @click="handleCountryGuess(country)"
-        @focus="focusedCountryIndex = index"
+        @focus="handleCountryFocus(index)"
         @keydown="handleCountryKeydown($event, country, index)"
       />
     </svg>
@@ -342,10 +389,6 @@ defineExpose({ resetZoom });
   stroke: var(--color-ink-soft);
 }
 
-.country:focus-visible {
-  stroke-width: 1;
-}
-
 .country--correct,
 .country--correct:hover,
 .country--correct:focus-visible {
@@ -365,6 +408,17 @@ defineExpose({ resetZoom });
 .country--missed-target:focus-visible {
   fill: var(--color-success);
   stroke: var(--color-success-deep);
+}
+
+.country:focus-visible {
+  stroke: var(--color-ink);
+  stroke-width: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .country {
+    transition: none;
+  }
 }
 
 @media (hover: none), (pointer: coarse) {

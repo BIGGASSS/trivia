@@ -1,9 +1,5 @@
-/**
- * Multiplayer room client: REST calls, SSE live updates, reconnect/health
- * state machine, and session persistence. Logic moved verbatim from the
- * original WorldMap component apart from the noted hardening changes.
- */
-import { computed, onUnmounted, ref, watch } from "vue";
+/** Multiplayer REST/SSE client with private sessions and ordered, cancellable state updates. */
+import { computed, onUnmounted, ref, shallowRef, watch } from "vue";
 import type { Ref } from "vue";
 import { multiplayerGamePath } from "@shared/game-constants";
 import { normalizeRoomCode } from "@shared/game-utils";
@@ -23,6 +19,18 @@ const clockTickMilliseconds = 250;
 
 export type RoomConnectionState = "connected" | "reconnecting" | "offline";
 
+class MultiplayerRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const isInvalidSession = (error: unknown): error is MultiplayerRequestError =>
+  error instanceof MultiplayerRequestError && [401, 403, 404, 410].includes(error.status);
+
 export interface MultiplayerRoomOptions {
   gamePhase: Ref<GamePhase>;
   selectedMode: Ref<GameMode>;
@@ -31,9 +39,14 @@ export interface MultiplayerRoomOptions {
   setGamePath: (path: string, replace?: boolean) => void;
 }
 
+interface RoomSession {
+  roomCode: string;
+  playerId: string;
+  sessionToken: string;
+}
+
 export const useMultiplayerRoom = (options: MultiplayerRoomOptions) => {
   const { gamePhase, selectedMode, totalRounds, getConfiguredRoundCount, setGamePath } = options;
-
   const multiplayerSetupAction = ref<MultiplayerSetupAction>("create");
   const multiplayerPlayerName = ref("Player 1");
   const multiplayerRoomCodeInput = ref("");
@@ -41,271 +54,238 @@ export const useMultiplayerRoom = (options: MultiplayerRoomOptions) => {
   const isMultiplayerBusy = ref(false);
   const isSubmittingAnswer = ref(false);
   const roomState = ref<PublicRoomState | null>(null);
-  const roomEvents = ref<EventSource | null>(null);
+  const roomEvents = shallowRef<EventSource | null>(null);
   const roomConnectionState = ref<RoomConnectionState>("connected");
-  const lastRoomEventAt = ref(0);
-  const lastRoomSyncAt = ref(0);
-  const lastRoomReconnectAttemptAt = ref(0);
   const isRoomSyncInFlight = ref(false);
   const now = ref(Date.now());
-  const clockTimer = ref<number | null>(null);
-  let roomSyncRequestId = 0;
-
+  const retryRoomCode = ref<string | null>(null);
   const normalizedJoinRoomCode = computed(() => normalizeRoomCode(multiplayerRoomCodeInput.value));
+  const canRetryRejoin = computed(() => retryRoomCode.value === normalizedJoinRoomCode.value);
+  let session: RoomSession | null = null;
+  let generation = 0;
+  let answerRequestId = 0;
+  const requests = new Set<AbortController>();
+  let clockTimer: number | null = null;
+  let lastRoomEventAt = 0;
+  let lastRoomSyncAt = 0;
+  let lastRoomReconnectAttemptAt = 0;
 
-  const buildRoomPath = (roomCode: string) =>
-    `${multiplayerGamePath}/${encodeURIComponent(normalizeRoomCode(roomCode))}`;
+  const roomApiPath = (roomCode: string) =>
+    `/api/multiplayer/rooms/${encodeURIComponent(normalizeRoomCode(roomCode))}`;
+  const sessionQuery = () => `sessionToken=${encodeURIComponent(session?.sessionToken ?? "")}`;
 
-  /**
-   * Fetch JSON from the multiplayer API. Non-JSON responses (e.g. an HTML
-   * 502 page from a proxy) are converted into readable errors instead of
-   * throwing an opaque JSON parse failure.
-   */
+  /** Track the entire fetch/body lifetime, not just receipt of HTTP headers. */
   const requestJson = async <T>(url: string, body?: Record<string, unknown>) => {
-    const response = await fetch(url, {
-      method: body ? "POST" : "GET",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const contentType = response.headers.get("content-type") ?? "";
-    let payload: (T & { error?: string }) | null = null;
-
-    if (contentType.includes("application/json")) {
-      try {
-        payload = (await response.json()) as T & { error?: string };
-      } catch {
-        payload = null;
+    const requestGeneration = generation;
+    const controller = new AbortController();
+    requests.add(controller);
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    controller.signal.addEventListener("abort", () => window.clearTimeout(timeout), { once: true });
+    try {
+      const response = await fetch(url, {
+        method: body ? "POST" : "GET",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+      });
+      let payload: (T & { error?: string }) | null = null;
+      if ((response.headers.get("content-type") ?? "").includes("application/json")) {
+        try {
+          payload = (await response.json()) as T & { error?: string };
+        } catch {
+          payload = null;
+        }
       }
+      // Abort may race with a completed response, or be ignored by a transport.
+      if (requestGeneration !== generation || controller.signal.aborted) {
+        throw new DOMException("Room request cancelled.", "AbortError");
+      }
+      if (!response.ok) {
+        throw new MultiplayerRequestError(
+          response.status,
+          payload?.error ?? `Multiplayer request failed (${response.status}).`,
+        );
+      }
+      if (!payload) throw new Error("Received an unexpected response from the multiplayer server.");
+      return payload;
+    } finally {
+      window.clearTimeout(timeout);
+      requests.delete(controller);
     }
-
-    if (!response.ok) {
-      throw new Error(
-        payload?.error ??
-          (response.statusText
-            ? `Multiplayer request failed: ${response.statusText} (${response.status}).`
-            : `Multiplayer request failed (${response.status}).`),
-      );
-    }
-
-    if (!payload) {
-      throw new Error("Received an unexpected response from the multiplayer server.");
-    }
-
-    return payload;
   };
 
   function markRoomConnectionAlive() {
-    lastRoomEventAt.value = Date.now();
-    lastRoomReconnectAttemptAt.value = 0;
+    lastRoomEventAt = Date.now();
+    lastRoomReconnectAttemptAt = 0;
     roomConnectionState.value = "connected";
   }
 
-  function resetRoomConnectionState() {
-    roomSyncRequestId += 1;
-    roomConnectionState.value = "connected";
-    lastRoomEventAt.value = 0;
-    lastRoomSyncAt.value = 0;
-    lastRoomReconnectAttemptAt.value = 0;
-    isRoomSyncInFlight.value = false;
-  }
-
-  function applyRoomState(
-    room: PublicRoomState,
-    applyOptions: { replacePath?: boolean; updatePath?: boolean } = {},
-  ) {
+  function applyRoomState(room: PublicRoomState, replacePath = true) {
+    if (
+      !session ||
+      room.roomCode !== session.roomCode ||
+      room.playerId !== session.playerId ||
+      !Number.isSafeInteger(room.revision)
+    )
+      return;
     markRoomConnectionAlive();
+    // HTTP snapshots and SSE can arrive in either order, including after results.
+    if (roomState.value && room.revision <= roomState.value.revision) return;
+    if (room.roundId !== roomState.value?.roundId || room.matchId !== roomState.value?.matchId) {
+      answerRequestId += 1;
+      isSubmittingAnswer.value = false;
+    }
     roomState.value = room;
     selectedMode.value = "multiplayer";
     totalRounds.value = room.roundCount;
     gamePhase.value =
       room.status === "playing" ? "playing" : room.status === "results" ? "results" : "setup";
     multiplayerErrorMessage.value = "";
-
+    retryRoomCode.value = null;
     const self = room.players.find((player) => player.id === room.playerId);
-
-    if (self) {
-      multiplayerPlayerName.value = self.name;
-    }
-
+    if (self) multiplayerPlayerName.value = self.name;
     saveMultiplayerSession({
-      playerId: room.playerId,
+      ...session,
       playerName: self?.name ?? multiplayerPlayerName.value,
-      roomCode: room.roomCode,
       updatedAt: Date.now(),
     });
-
-    if (applyOptions.updatePath ?? true) {
-      setGamePath(buildRoomPath(room.roomCode), applyOptions.replacePath ?? true);
-    }
+    setGamePath(`${multiplayerGamePath}/${encodeURIComponent(room.roomCode)}`, replacePath);
+    return true;
   }
 
   function closeRoomEvents() {
-    if (roomEvents.value) {
-      roomEvents.value.close();
-      roomEvents.value = null;
-    }
+    const source = roomEvents.value;
+    roomEvents.value = null;
+    source?.close();
   }
 
-  function connectRoomEvents(roomCode: string, playerId: string) {
+  function connectRoomEvents() {
+    if (!session) return;
     closeRoomEvents();
-
-    const normalizedRoomCode = normalizeRoomCode(roomCode);
-    const source = new EventSource(
-      `/api/multiplayer/rooms/${encodeURIComponent(normalizedRoomCode)}/events?playerId=${encodeURIComponent(playerId)}`,
-    );
-
-    source.onopen = () => {
-      markRoomConnectionAlive();
-    };
-
-    source.addEventListener("state", (event) => {
-      const messageEvent = event as MessageEvent<string>;
-      const nextRoomState = JSON.parse(messageEvent.data) as PublicRoomState;
-
-      now.value = Date.now();
-      markRoomConnectionAlive();
-      applyRoomState(nextRoomState);
-    });
-
-    source.addEventListener("heartbeat", () => {
-      markRoomConnectionAlive();
-    });
-
-    source.onerror = () => {
-      if (
-        roomState.value?.roomCode === normalizedRoomCode &&
-        roomState.value.playerId === playerId
-      ) {
-        roomConnectionState.value = navigator.onLine ? "reconnecting" : "offline";
-      }
-    };
-
-    if (!lastRoomEventAt.value) {
-      lastRoomEventAt.value = Date.now();
-    }
-
+    const eventGeneration = generation;
+    const source = new EventSource(`${roomApiPath(session.roomCode)}/events?${sessionQuery()}`);
     roomEvents.value = source;
+    const isCurrent = () => eventGeneration === generation && roomEvents.value === source;
+    source.onopen = () => {
+      if (isCurrent()) markRoomConnectionAlive();
+    };
+    source.addEventListener("state", (event) => {
+      if (!isCurrent()) return;
+      try {
+        const room = JSON.parse((event as MessageEvent<string>).data) as PublicRoomState;
+        now.value = Date.now();
+        applyRoomState(room);
+      } catch {
+        roomConnectionState.value = "reconnecting";
+      }
+    });
+    source.addEventListener("heartbeat", () => {
+      if (isCurrent()) markRoomConnectionAlive();
+    });
+    source.onerror = () => {
+      if (!isCurrent()) return;
+      roomConnectionState.value = navigator.onLine ? "reconnecting" : "offline";
+      // EventSource hides HTTP status. Confirm revoked sessions over HTTP.
+      void syncCurrentRoomState();
+    };
+    if (!lastRoomEventAt) lastRoomEventAt = Date.now();
   }
 
   async function syncCurrentRoomState() {
     const room = roomState.value;
-
-    if (!room || isRoomSyncInFlight.value) {
-      return;
-    }
-
-    const roomCode = room.roomCode;
-    const playerId = room.playerId;
-    const syncRequestId = (roomSyncRequestId += 1);
-
+    if (!room || !session || isRoomSyncInFlight.value) return;
+    const requestGeneration = generation;
     isRoomSyncInFlight.value = true;
-    lastRoomSyncAt.value = Date.now();
-
+    lastRoomSyncAt = Date.now();
     try {
       const response = await requestJson<MultiplayerApiResponse>(
-        `/api/multiplayer/rooms/${encodeURIComponent(roomCode)}?playerId=${encodeURIComponent(playerId)}`,
+        `${roomApiPath(room.roomCode)}?${sessionQuery()}`,
       );
-
-      if (roomState.value?.roomCode !== roomCode || roomState.value.playerId !== playerId) {
-        return;
-      }
-
+      if (requestGeneration !== generation) return;
       applyRoomState(response.room);
-
-      if (!roomEvents.value || roomEvents.value.readyState === EventSource.CLOSED) {
-        connectRoomEvents(response.room.roomCode, response.room.playerId);
-      }
-    } catch {
-      if (roomState.value?.roomCode === roomCode && roomState.value.playerId === playerId) {
+      if (!roomEvents.value || roomEvents.value.readyState === EventSource.CLOSED)
+        connectRoomEvents();
+    } catch (error) {
+      if (requestGeneration !== generation) return;
+      if (isInvalidSession(error)) {
+        invalidateSession(room.roomCode, error);
+      } else {
         roomConnectionState.value = navigator.onLine ? "reconnecting" : "offline";
       }
     } finally {
-      if (syncRequestId === roomSyncRequestId) {
-        isRoomSyncInFlight.value = false;
-      }
+      if (requestGeneration === generation) isRoomSyncInFlight.value = false;
     }
   }
 
   function checkRoomConnectionHealth() {
     const room = roomState.value;
-
-    if (!room) {
-      return;
-    }
-
+    if (!room) return;
     const currentTime = Date.now();
-
     if (!navigator.onLine) {
       roomConnectionState.value = "offline";
       return;
     }
-
-    if (!lastRoomEventAt.value) {
-      lastRoomEventAt.value = currentTime;
-    }
-
-    const isConnectionStale = currentTime - lastRoomEventAt.value > roomConnectionStaleMilliseconds;
+    if (!lastRoomEventAt) lastRoomEventAt = currentTime;
+    const isConnectionStale = currentTime - lastRoomEventAt > roomConnectionStaleMilliseconds;
     const shouldSyncExpiredRound =
       room.status === "playing" &&
       !room.roundLocked &&
       room.roundEndsAt !== null &&
       currentTime >= room.roundEndsAt + roundDeadlineSyncGraceMilliseconds;
-
     if (isConnectionStale) {
       roomConnectionState.value = "reconnecting";
-
-      if (currentTime - lastRoomReconnectAttemptAt.value > roomReconnectCooldownMilliseconds) {
-        lastRoomReconnectAttemptAt.value = currentTime;
-        connectRoomEvents(room.roomCode, room.playerId);
+      if (currentTime - lastRoomReconnectAttemptAt > roomReconnectCooldownMilliseconds) {
+        lastRoomReconnectAttemptAt = currentTime;
+        connectRoomEvents();
       }
     }
-
     if (
       (isConnectionStale || shouldSyncExpiredRound) &&
-      currentTime - lastRoomSyncAt.value > roomSyncIntervalMilliseconds
+      currentTime - lastRoomSyncAt > roomSyncIntervalMilliseconds
     ) {
       void syncCurrentRoomState();
     }
   }
 
   function stopClockTimer() {
-    if (clockTimer.value !== null) {
-      window.clearInterval(clockTimer.value);
-      clockTimer.value = null;
-    }
+    if (clockTimer !== null) window.clearInterval(clockTimer);
+    clockTimer = null;
   }
 
-  function startClockTimer() {
-    if (clockTimer.value !== null) {
-      return;
-    }
-
-    now.value = Date.now();
-    clockTimer.value = window.setInterval(() => {
-      now.value = Date.now();
-      checkRoomConnectionHealth();
-    }, clockTickMilliseconds);
-  }
-
-  // The 250 ms clock only needs to tick while a multiplayer room is active;
-  // solo games and the setup screen use their own 1 s round timer.
   watch(roomState, (room) => {
-    if (room) {
-      startClockTimer();
-    } else {
+    if (!room) {
       stopClockTimer();
+    } else if (clockTimer === null) {
+      now.value = Date.now();
+      clockTimer = window.setInterval(() => {
+        now.value = Date.now();
+        checkRoomConnectionHealth();
+      }, clockTickMilliseconds);
     }
   });
 
-  /** Drop all local room state without notifying the server. */
+  /** Navigation/unmount is disconnection, not an explicit membership departure. */
   function detachRoom() {
+    generation += 1;
+    for (const controller of requests) controller.abort();
+    requests.clear();
     closeRoomEvents();
-    resetRoomConnectionState();
+    stopClockTimer();
+    session = null;
+    retryRoomCode.value = null;
     roomState.value = null;
+    isMultiplayerBusy.value = false;
+    isSubmittingAnswer.value = false;
+    isRoomSyncInFlight.value = false;
+    roomConnectionState.value = "connected";
+    lastRoomEventAt = 0;
+    lastRoomSyncAt = 0;
+    lastRoomReconnectAttemptAt = 0;
   }
 
   function showJoinRoomFromPath(roomCode: string, message?: string) {
-    detachRoom();
     selectedMode.value = "multiplayer";
     multiplayerSetupAction.value = "join";
     multiplayerRoomCodeInput.value = normalizeRoomCode(roomCode);
@@ -314,221 +294,201 @@ export const useMultiplayerRoom = (options: MultiplayerRoomOptions) => {
       message ?? `Room ${normalizeRoomCode(roomCode)} is ready. Enter your name to join.`;
   }
 
-  async function restoreServerRoomFromRoute(roomCode: string, explicitPlayerId: string | null) {
+  function invalidateSession(roomCode: string, error: Error) {
+    removeMultiplayerSession(roomCode, session?.sessionToken);
+    detachRoom();
+    showJoinRoomFromPath(roomCode, `${error.message} Enter your name to join this room.`);
+  }
+
+  async function restoreServerRoomFromRoute(roomCode: string) {
     const normalizedRoomCode = normalizeRoomCode(roomCode);
+    if (session?.roomCode === normalizedRoomCode && roomState.value) {
+      if (!roomEvents.value) connectRoomEvents();
+      return;
+    }
+    detachRoom();
     const storedSession = getStoredMultiplayerSession(normalizedRoomCode);
-    const playerId = explicitPlayerId ?? storedSession?.playerId ?? null;
-
-    if (!playerId) {
-      showJoinRoomFromPath(normalizedRoomCode);
-      return;
-    }
-
-    if (roomState.value?.roomCode === normalizedRoomCode && roomState.value.playerId === playerId) {
-      if (!roomEvents.value) {
-        connectRoomEvents(normalizedRoomCode, playerId);
-      }
-
-      return;
-    }
-
+    showJoinRoomFromPath(normalizedRoomCode);
+    if (!storedSession) return;
+    session = { ...storedSession, roomCode: normalizedRoomCode };
+    multiplayerPlayerName.value = storedSession.playerName;
+    const requestGeneration = generation;
     isMultiplayerBusy.value = true;
-    selectedMode.value = "multiplayer";
-    multiplayerSetupAction.value = "join";
-    multiplayerRoomCodeInput.value = normalizedRoomCode;
     multiplayerErrorMessage.value = "Rejoining multiplayer room…";
-
     try {
       const response = await requestJson<MultiplayerApiResponse>(
-        `/api/multiplayer/rooms/${encodeURIComponent(normalizedRoomCode)}?playerId=${encodeURIComponent(playerId)}`,
+        `${roomApiPath(normalizedRoomCode)}?${sessionQuery()}`,
       );
-
-      applyRoomState(response.room, { replacePath: true });
-      connectRoomEvents(response.room.roomCode, response.room.playerId);
+      if (requestGeneration !== generation) return;
+      applyRoomState(response.room);
+      connectRoomEvents();
     } catch (error) {
-      removeMultiplayerSession(normalizedRoomCode);
-      showJoinRoomFromPath(
-        normalizedRoomCode,
-        error instanceof Error
-          ? `${error.message} Enter your name to join this room.`
-          : "Could not rejoin that room. Enter your name to join.",
-      );
+      if (requestGeneration !== generation) return;
+      if (isInvalidSession(error)) {
+        invalidateSession(normalizedRoomCode, error);
+      } else {
+        // Offline, proxy errors, malformed responses: keep the only credential.
+        retryRoomCode.value = normalizedRoomCode;
+        roomConnectionState.value = navigator.onLine ? "reconnecting" : "offline";
+        multiplayerErrorMessage.value = `${error instanceof Error ? error.message : "Could not rejoin."} Your session is saved. Retry rejoining when the connection returns.`;
+      }
     } finally {
-      isMultiplayerBusy.value = false;
+      if (requestGeneration === generation) isMultiplayerBusy.value = false;
     }
   }
 
   const handleBrowserOffline = () => {
-    if (roomState.value) {
-      roomConnectionState.value = "offline";
-    }
+    if (session) roomConnectionState.value = "offline";
   };
-
   const handleBrowserOnline = () => {
-    const room = roomState.value;
-
-    if (!room) {
-      return;
+    if (
+      retryRoomCode.value &&
+      canRetryRejoin.value &&
+      multiplayerSetupAction.value === "join" &&
+      !isMultiplayerBusy.value
+    ) {
+      void restoreServerRoomFromRoute(retryRoomCode.value);
+    } else if (roomState.value) {
+      roomConnectionState.value = "reconnecting";
+      connectRoomEvents();
+      void syncCurrentRoomState();
     }
-
-    roomConnectionState.value = "reconnecting";
-    connectRoomEvents(room.roomCode, room.playerId);
-    void syncCurrentRoomState();
   };
 
-  async function createServerRoom() {
-    if (isMultiplayerBusy.value) {
-      return;
-    }
-
+  async function enterRoom(roomCode?: string) {
+    if (isMultiplayerBusy.value) return;
+    detachRoom();
+    const requestGeneration = generation;
     isMultiplayerBusy.value = true;
     multiplayerErrorMessage.value = "";
-
     try {
-      const response = await requestJson<MultiplayerApiResponse>("/api/multiplayer/rooms", {
-        playerName: multiplayerPlayerName.value,
-        rounds: getConfiguredRoundCount(),
-      });
-
-      applyRoomState(response.room, { replacePath: false });
-      connectRoomEvents(response.room.roomCode, response.playerId ?? response.room.playerId);
+      const response = await requestJson<MultiplayerApiResponse>(
+        roomCode ? `${roomApiPath(roomCode)}/join` : "/api/multiplayer/rooms",
+        {
+          playerName: multiplayerPlayerName.value,
+          ...(roomCode ? {} : { rounds: getConfiguredRoundCount() }),
+        },
+      );
+      if (requestGeneration !== generation) return;
+      if (!response.sessionToken)
+        throw new Error("The server did not return a private player session.");
+      session = {
+        roomCode: response.room.roomCode,
+        playerId: response.room.playerId,
+        sessionToken: response.sessionToken,
+      };
+      applyRoomState(response.room, false);
+      connectRoomEvents();
     } catch (error) {
+      if (requestGeneration !== generation) return;
       multiplayerErrorMessage.value =
-        error instanceof Error ? error.message : "Could not create a room.";
+        error instanceof Error ? error.message : "Could not enter the room.";
     } finally {
-      isMultiplayerBusy.value = false;
+      if (requestGeneration === generation) isMultiplayerBusy.value = false;
     }
   }
 
+  const createServerRoom = () => enterRoom();
   async function joinServerRoom() {
-    if (isMultiplayerBusy.value) {
-      return;
-    }
-
+    if (isMultiplayerBusy.value) return;
     const roomCode = normalizedJoinRoomCode.value;
-
     if (!roomCode) {
       multiplayerErrorMessage.value = "Enter a room code to join.";
       return;
     }
-
-    isMultiplayerBusy.value = true;
-    multiplayerErrorMessage.value = "";
-
-    try {
-      const response = await requestJson<MultiplayerApiResponse>(
-        `/api/multiplayer/rooms/${encodeURIComponent(roomCode)}/join`,
-        {
-          playerName: multiplayerPlayerName.value,
-        },
-      );
-
-      applyRoomState(response.room, { replacePath: false });
-      connectRoomEvents(response.room.roomCode, response.playerId ?? response.room.playerId);
-    } catch (error) {
-      multiplayerErrorMessage.value =
-        error instanceof Error ? error.message : "Could not join the room.";
-    } finally {
-      isMultiplayerBusy.value = false;
+    // Never create a duplicate player when a recoverable session already exists.
+    if (getStoredMultiplayerSession(roomCode)) {
+      await restoreServerRoomFromRoute(roomCode);
+    } else {
+      await enterRoom(roomCode);
     }
   }
 
-  /** Returns true when the room was started successfully. */
   async function startServerRoom() {
     const room = roomState.value;
-
-    if (!room || isMultiplayerBusy.value) {
-      return false;
-    }
-
+    if (!room || !session || isMultiplayerBusy.value) return false;
+    const requestGeneration = generation;
     isMultiplayerBusy.value = true;
     multiplayerErrorMessage.value = "";
-
     try {
       const response = await requestJson<MultiplayerApiResponse>(
-        `/api/multiplayer/rooms/${encodeURIComponent(room.roomCode)}/start`,
-        {
-          playerId: room.playerId,
-        },
+        `${roomApiPath(room.roomCode)}/start`,
+        { sessionToken: session.sessionToken },
       );
-
-      applyRoomState(response.room);
-
-      return true;
+      if (requestGeneration !== generation) return false;
+      // Do not let a late start response reset a newer round's reveal viewport.
+      return applyRoomState(response.room) ?? false;
     } catch (error) {
-      multiplayerErrorMessage.value =
-        error instanceof Error ? error.message : "Could not start the room.";
-
+      if (requestGeneration === generation)
+        multiplayerErrorMessage.value =
+          error instanceof Error ? error.message : "Could not start the room.";
       return false;
     } finally {
-      isMultiplayerBusy.value = false;
+      if (requestGeneration === generation) isMultiplayerBusy.value = false;
     }
   }
 
   async function submitServerAnswer(countryId: string | null) {
     const room = roomState.value;
-
-    if (!room || isSubmittingAnswer.value) {
-      return;
-    }
-
+    if (!room || !session || isSubmittingAnswer.value) return;
+    const requestGeneration = generation;
+    const submissionId = ++answerRequestId;
     isSubmittingAnswer.value = true;
     multiplayerErrorMessage.value = "";
-
     try {
-      const action = countryId ? "guess" : "skip";
       const response = await requestJson<MultiplayerApiResponse>(
-        `/api/multiplayer/rooms/${encodeURIComponent(room.roomCode)}/${action}`,
+        `${roomApiPath(room.roomCode)}/${countryId === null ? "skip" : "guess"}`,
         {
-          playerId: room.playerId,
+          sessionToken: session.sessionToken,
+          matchId: room.matchId,
+          roundId: room.roundId,
           countryId,
         },
       );
-
-      applyRoomState(response.room);
+      if (requestGeneration === generation) applyRoomState(response.room);
     } catch (error) {
-      multiplayerErrorMessage.value =
-        error instanceof Error ? error.message : "Could not submit your answer.";
+      if (
+        requestGeneration === generation &&
+        submissionId === answerRequestId &&
+        roomState.value?.roundId === room.roundId &&
+        roomState.value?.matchId === room.matchId
+      ) {
+        multiplayerErrorMessage.value =
+          error instanceof Error ? error.message : "Could not submit your answer.";
+      }
     } finally {
-      isSubmittingAnswer.value = false;
+      if (requestGeneration === generation && submissionId === answerRequestId)
+        isSubmittingAnswer.value = false;
     }
   }
 
   async function leaveServerRoom() {
-    const room = roomState.value;
-
+    const leavingSession = session;
     detachRoom();
     multiplayerErrorMessage.value = "";
     gamePhase.value = "setup";
     setGamePath(multiplayerGamePath);
-
-    if (!room) {
-      return;
-    }
-
-    removeMultiplayerSession(room.roomCode);
-
+    if (!leavingSession) return;
+    removeMultiplayerSession(leavingSession.roomCode, leavingSession.sessionToken);
     try {
-      await requestJson(`/api/multiplayer/rooms/${encodeURIComponent(room.roomCode)}/leave`, {
-        playerId: room.playerId,
+      await requestJson(`${roomApiPath(leavingSession.roomCode)}/leave`, {
+        sessionToken: leavingSession.sessionToken,
       });
     } catch {
-      // The room may already be gone; leaving is best-effort from the client.
+      // Explicit leave is best-effort; local state must stay detached regardless.
     }
   }
 
   window.addEventListener("offline", handleBrowserOffline);
   window.addEventListener("online", handleBrowserOnline);
-
   onUnmounted(() => {
     window.removeEventListener("offline", handleBrowserOffline);
     window.removeEventListener("online", handleBrowserOnline);
-    stopClockTimer();
-    closeRoomEvents();
-    resetRoomConnectionState();
+    detachRoom();
   });
 
   return {
+    canRetryRejoin,
     createServerRoom,
     detachRoom,
     isMultiplayerBusy,

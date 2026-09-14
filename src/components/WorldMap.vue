@@ -24,7 +24,7 @@ type GameRoute =
   | { type: "setup" }
   | { type: "solo" }
   | { type: "multiplayer-setup" }
-  | { type: "multiplayer-room"; roomCode: string; playerId: string | null };
+  | { type: "multiplayer-room"; roomCode: string };
 
 const route = useRoute();
 const router = useRouter();
@@ -72,6 +72,7 @@ const multiplayer = useMultiplayerRoom({
   setGamePath,
 });
 const {
+  canRetryRejoin,
   createServerRoom,
   detachRoom,
   isMultiplayerBusy,
@@ -109,12 +110,7 @@ const parseGameRoute = (): GameRoute => {
     const roomCode = normalizeRoomCode(segments[2] ?? "");
 
     if (roomCode) {
-      const playerIdParameter = route.query.playerId ?? route.query.player;
-      const playerId = Array.isArray(playerIdParameter)
-        ? (playerIdParameter[0] ?? null)
-        : (playerIdParameter ?? null);
-
-      return { type: "multiplayer-room", roomCode, playerId };
+      return { type: "multiplayer-room", roomCode };
     }
 
     return { type: "multiplayer-setup" };
@@ -123,22 +119,27 @@ const parseGameRoute = (): GameRoute => {
   return { type: "setup" };
 };
 
-async function syncRouteToState() {
+function syncRouteToState() {
   isSyncingRoute = true;
 
   try {
     const gameRoute = parseGameRoute();
 
+    // Vue Router reuses this component across game routes. Abandon the solo
+    // session before restoring another route, including its final reveal delay.
+    if (gameRoute.type !== "multiplayer-room" || roomState.value?.roomCode !== gameRoute.roomCode) {
+      solo.resetToSetup();
+    }
+
     if (gameRoute.type === "solo") {
       detachRoom();
       selectedMode.value = "solo";
-      gamePhase.value = "setup";
       multiplayerErrorMessage.value = "";
       return;
     }
 
     if (gameRoute.type === "multiplayer-room") {
-      await restoreServerRoomFromRoute(gameRoute.roomCode, gameRoute.playerId);
+      void restoreServerRoomFromRoute(gameRoute.roomCode);
       return;
     }
 
@@ -146,13 +147,11 @@ async function syncRouteToState() {
       detachRoom();
       selectedMode.value = "multiplayer";
       multiplayerSetupAction.value = "create";
-      gamePhase.value = "setup";
       multiplayerErrorMessage.value = "";
       return;
     }
 
     detachRoom();
-    gamePhase.value = "setup";
   } finally {
     isSyncingRoute = false;
   }
@@ -204,8 +203,11 @@ const multiplayerSelf = computed(() => {
   return room.players.find((player) => player.id === room.playerId) ?? null;
 });
 const isMultiplayerHost = computed(() => roomState.value?.hostId === roomState.value?.playerId);
+const activeRoomPlayers = computed(
+  () => roomState.value?.players.filter((player) => player.active) ?? [],
+);
 const answeredPlayersCount = computed(
-  () => roomState.value?.players.filter((player) => player.hasAnswered).length ?? 0,
+  () => activeRoomPlayers.value.filter((player) => player.hasAnswered).length,
 );
 const displayPlayers = computed<Player[]>(() => {
   if (roomState.value) {
@@ -258,7 +260,7 @@ const roundSummary = computed(() => {
       return `${roomState.value.roundCount} rounds complete`;
     }
 
-    return `Round ${roomState.value.currentRound} of ${roomState.value.roundCount} · ${answeredPlayersCount.value}/${roomState.value.players.length} answered`;
+    return `Round ${roomState.value.currentRound} of ${roomState.value.roundCount} · ${answeredPlayersCount.value}/${activeRoomPlayers.value.length} answered`;
   }
 
   return `Round ${currentRoundNumber.value} of ${totalRounds.value}`;
@@ -457,13 +459,18 @@ const returnToSetup = () => {
   resetSoloSetup();
 };
 
-watch(selectedMode, (mode) => {
-  if (isSyncingRoute || roomState.value || gamePhase.value !== "setup") {
-    return;
-  }
+watch(
+  selectedMode,
+  (mode) => {
+    if (isSyncingRoute || roomState.value || gamePhase.value !== "setup") {
+      return;
+    }
 
-  setGamePath(mode === "solo" ? soloGamePath : multiplayerGamePath);
-});
+    detachRoom();
+    setGamePath(mode === "solo" ? soloGamePath : multiplayerGamePath);
+  },
+  { flush: "sync" },
+);
 
 onMounted(() => {
   void loadCountries();
@@ -497,6 +504,7 @@ onUnmounted(() => {
         :maximum-round-count="maximumRoundCount"
         :error-message="multiplayerErrorMessage"
         :is-busy="isMultiplayerBusy"
+        :can-retry-rejoin="canRetryRejoin"
         @start-solo="startSoloGame"
         @create-room="createServerRoom"
         @join-room="joinServerRoom"

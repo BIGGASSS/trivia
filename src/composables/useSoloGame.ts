@@ -119,6 +119,14 @@ export const useSoloGame = (
     clearPendingRound();
 
     nextRoundTimeout.value = window.setTimeout(() => {
+      nextRoundTimeout.value = null;
+
+      // The shared phase can change when navigating to another game mode.
+      // Never let an abandoned final delay replace that screen with results.
+      if (gamePhase.value !== "playing") {
+        return;
+      }
+
       if (soloCurrentRound.value >= totalRounds.value) {
         finishSoloGame();
         return;

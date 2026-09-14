@@ -1,6 +1,6 @@
 /**
- * Map viewport state: zoom / pan / pinch with pointer capture. Logic moved
- * verbatim from the original WorldMap component.
+ * Map viewport state: zoom / pan / pinch with pointer capture. All client
+ * coordinates use the inverse SVG screen transform, including letterboxing.
  */
 import { computed, ref } from "vue";
 import { clamp } from "@shared/game-utils";
@@ -13,7 +13,8 @@ export interface MapViewState {
 
 interface PinchGestureStart {
   distance: number;
-  zoom: number;
+  viewState: MapViewState;
+  transform: DOMMatrix;
   focalPoint: MapPoint;
   centerClient: MapPoint;
 }
@@ -41,13 +42,14 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
   const isPanning = ref(false);
   const panStartClient = ref<MapPoint | null>(null);
   const panStartCenter = ref<MapPoint>({ x: 0, y: 0 });
-  const panStartScale = ref<MapPoint>({ x: 1, y: 1 });
+  let panStartTransform: DOMMatrix | null = null;
   const isPinchingMap = ref(false);
   const pinchStart = ref<PinchGestureStart | null>(null);
   const hasDraggedMap = ref(false);
   const suppressNextCountryClick = ref(false);
   const activeMapPointers = new Map<number, MapPoint>();
   const pointerCaptureElements = new Map<number, Element>();
+  let suppressCountryClickTimeout: number | null = null;
 
   const beforeInteraction = () => {
     options.onBeforeInteraction?.();
@@ -108,52 +110,35 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
         : getClampedCenter(state.center, clampedZoom);
   };
 
-  const getSvgPointFromClient = (clientPoint: MapPoint) => {
-    const svg = mapSvg.value;
+  const getInverseScreenTransform = () => {
+    try {
+      const transform = mapSvg.value?.getScreenCTM()?.inverse();
 
-    if (!svg) {
+      // Hidden/detached SVGs and singular CSS transforms have no usable CTM.
+      return transform &&
+        [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f].every(
+          Number.isFinite,
+        )
+        ? transform
+        : null;
+    } catch {
       return null;
     }
-
-    const transformMatrix = svg.getScreenCTM();
-
-    if (!transformMatrix) {
-      return null;
-    }
-
-    const point = svg.createSVGPoint();
-    point.x = clientPoint.x;
-    point.y = clientPoint.y;
-
-    const transformedPoint = point.matrixTransform(transformMatrix.inverse());
-
-    return {
-      x: transformedPoint.x,
-      y: transformedPoint.y,
-    };
   };
+
+  const getSvgPointFromClient = (
+    point: MapPoint,
+    transform = getInverseScreenTransform(),
+  ): MapPoint | null =>
+    transform
+      ? {
+          x: transform.a * point.x + transform.c * point.y + transform.e,
+          y: transform.b * point.x + transform.d * point.y + transform.f,
+        }
+      : null;
 
   const getSvgPoint = (event: PointerEvent | WheelEvent) =>
     getSvgPointFromClient({ x: event.clientX, y: event.clientY });
-
-  const getClientPointRatio = (clientPoint: MapPoint) => {
-    const svg = mapSvg.value;
-
-    if (!svg) {
-      return null;
-    }
-
-    const bounds = svg.getBoundingClientRect();
-
-    if (!bounds.width || !bounds.height) {
-      return null;
-    }
-
-    return {
-      x: clamp((clientPoint.x - bounds.left) / bounds.width, 0, 1),
-      y: clamp((clientPoint.y - bounds.top) / bounds.height, 0, 1),
-    };
-  };
 
   const setZoom = (nextZoom: number, focalPoint?: MapPoint) => {
     const previousZoom = zoomLevel.value;
@@ -185,24 +170,26 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
 
   const setZoomFromClientAnchor = (
     nextZoom: number,
-    focalPoint: MapPoint,
+    gesture: PinchGestureStart,
     clientPoint: MapPoint,
   ) => {
     const clampedZoom = clamp(nextZoom, minimumMapZoom, maximumMapZoom);
-    const clientRatio = getClientPointRatio(clientPoint);
+    const point = getSvgPointFromClient(clientPoint, gesture.transform);
 
-    if (!clientRatio) {
-      setZoom(clampedZoom, focalPoint);
+    if (!point) {
       return;
     }
 
-    const nextSize = getViewBoxSize(clampedZoom);
+    // Keep the original focal point under the moving midpoint. Use a frozen
+    // transform/view pair so moves also work before Vue updates the viewBox.
+    // Bounding-rectangle ratios are wrong with xMidYMid meet letterboxing.
+    const scale = gesture.viewState.zoom / clampedZoom;
 
     zoomLevel.value = clampedZoom;
     mapCenter.value = getClampedCenter(
       {
-        x: focalPoint.x + (0.5 - clientRatio.x) * nextSize.width,
-        y: focalPoint.y + (0.5 - clientRatio.y) * nextSize.height,
+        x: gesture.focalPoint.x - (point.x - gesture.viewState.center.x) * scale,
+        y: gesture.focalPoint.y - (point.y - gesture.viewState.center.y) * scale,
       },
       clampedZoom,
     );
@@ -264,32 +251,23 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
     }
   };
 
-  const releaseMapPointer = (event: PointerEvent) => {
-    const captureTarget = pointerCaptureElements.get(event.pointerId);
+  const releaseMapPointer = (pointerId: number) => {
+    const captureTarget = pointerCaptureElements.get(pointerId);
+    pointerCaptureElements.delete(pointerId);
 
     try {
-      captureTarget?.releasePointerCapture(event.pointerId);
+      captureTarget?.releasePointerCapture(pointerId);
     } catch {
       // Pointer capture may already be released by the browser.
-    } finally {
-      pointerCaptureElements.delete(event.pointerId);
     }
   };
 
   const startPanningFromPoint = (clientPoint: MapPoint, preserveDragState = false) => {
-    const svg = mapSvg.value;
+    const transform = getInverseScreenTransform();
 
-    if (!svg) {
+    if (!transform) {
       return;
     }
-
-    const bounds = svg.getBoundingClientRect();
-
-    if (!bounds.width || !bounds.height) {
-      return;
-    }
-
-    const { width, height } = getViewBoxSize(zoomLevel.value);
 
     isPanning.value = true;
     isPinchingMap.value = false;
@@ -301,10 +279,7 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
 
     panStartClient.value = { ...clientPoint };
     panStartCenter.value = { ...mapCenter.value };
-    panStartScale.value = {
-      x: width / bounds.width,
-      y: height / bounds.height,
-    };
+    panStartTransform = transform;
   };
 
   const beginPinchGesture = () => {
@@ -316,9 +291,10 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
 
     const [firstPointer, secondPointer] = pointerPair;
     const centerClient = getPointerMidpoint(firstPointer, secondPointer);
-    const focalPoint = getSvgPointFromClient(centerClient);
+    const transform = getInverseScreenTransform();
+    const focalPoint = getSvgPointFromClient(centerClient, transform);
 
-    if (!focalPoint) {
+    if (!focalPoint || !transform) {
       return;
     }
 
@@ -328,7 +304,8 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
     panStartClient.value = null;
     pinchStart.value = {
       distance: Math.max(getPointerDistance(firstPointer, secondPointer), 1),
-      zoom: zoomLevel.value,
+      viewState: getCurrentMapViewState(),
+      transform,
       focalPoint,
       centerClient,
     };
@@ -355,30 +332,38 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
     }
 
     setZoomFromClientAnchor(
-      gesture.zoom * (currentDistance / gesture.distance),
-      gesture.focalPoint,
+      gesture.viewState.zoom * (currentDistance / gesture.distance),
+      gesture,
       currentCenter,
     );
   };
 
   const suppressCountryClickAfterMapGesture = () => {
     suppressNextCountryClick.value = true;
-    window.setTimeout(() => {
+    if (suppressCountryClickTimeout !== null) {
+      window.clearTimeout(suppressCountryClickTimeout);
+    }
+    suppressCountryClickTimeout = window.setTimeout(() => {
+      suppressCountryClickTimeout = null;
       suppressNextCountryClick.value = false;
     }, 0);
   };
 
-  const stopMapInteraction = () => {
-    if (hasDraggedMap.value) {
+  const stopMapInteraction = (suppressClick = true) => {
+    if (suppressClick && hasDraggedMap.value) {
       suppressCountryClickAfterMapGesture();
     }
 
     isPanning.value = false;
     isPinchingMap.value = false;
     panStartClient.value = null;
+    panStartTransform = null;
     pinchStart.value = null;
+    hasDraggedMap.value = false;
     activeMapPointers.clear();
-    pointerCaptureElements.clear();
+    for (const pointerId of pointerCaptureElements.keys()) {
+      releaseMapPointer(pointerId);
+    }
   };
 
   const handleMapPointerDown = (event: PointerEvent) => {
@@ -425,7 +410,7 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
       return;
     }
 
-    if (!isPanning.value || !panStartClient.value) {
+    if (!isPanning.value || !panStartClient.value || !panStartTransform) {
       return;
     }
 
@@ -437,14 +422,18 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
     }
 
     setMapCenter({
-      x: panStartCenter.value.x - deltaX * panStartScale.value.x,
-      y: panStartCenter.value.y - deltaY * panStartScale.value.y,
+      x: panStartCenter.value.x - (panStartTransform.a * deltaX + panStartTransform.c * deltaY),
+      y: panStartCenter.value.y - (panStartTransform.b * deltaX + panStartTransform.d * deltaY),
     });
   };
 
   const handleMapPointerEnd = (event: PointerEvent) => {
+    if (!activeMapPointers.has(event.pointerId)) {
+      return;
+    }
+
     activeMapPointers.delete(event.pointerId);
-    releaseMapPointer(event);
+    releaseMapPointer(event.pointerId);
 
     if (isPinchingMap.value && activeMapPointers.size >= 2) {
       beginPinchGesture();
@@ -479,8 +468,12 @@ export const useMapViewport = (options: MapViewportOptions = {}) => {
   };
 
   const teardown = () => {
-    activeMapPointers.clear();
-    pointerCaptureElements.clear();
+    stopMapInteraction(false);
+    if (suppressCountryClickTimeout !== null) {
+      window.clearTimeout(suppressCountryClickTimeout);
+      suppressCountryClickTimeout = null;
+    }
+    suppressNextCountryClick.value = false;
   };
 
   return {

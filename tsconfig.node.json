@@ -9,7 +9,8 @@
     "eslint.config.*",
     "server/**/*",
     "shared/**/*",
-    "scripts/**/*"
+    "scripts/**/*",
+    "tests/browser/**/*.ts"
   ],
   "exclude": ["**/__tests__/**"],
   "compilerOptions": {
@@ -17,6 +18,8 @@
     // Bundler mode provides a smoother developer experience.
     "module": "preserve",
     "moduleResolution": "bundler",
+    // Playwright evaluates typed callbacks inside the real browser.
+    "lib": ["ES2025", "ESNext.Collection", "ESNext.Temporal", "DOM"],
 
     // Include Node.js types and avoid accidentally including other `@types/*` packages.
     "types": ["node"],
