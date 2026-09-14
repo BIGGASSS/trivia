@@ -32,7 +32,7 @@ World Trivia is a Vue/Vite geography trivia app. Players are prompted with a cou
 The map pipeline has three stages:
 
 1. `data/countries.geo.json` — the source GeoJSON feature collection (committed to git so builds are reproducible without a download step).
-2. `scripts/build-country-paths.ts` — converts the GeoJSON into compact SVG path strings, simplifying shared borders topologically so neighbouring countries stay crack-free. Run it with `pnpm build:map` (also runs automatically as part of `pnpm build`).
+2. `scripts/build-country-paths.ts` — converts the GeoJSON into compact SVG path strings, simplifying shared borders topologically so neighbouring countries stay crack-free. Run it with `vp run build:map` (also runs automatically as part of `vp run build`).
 3. `public/countries.paths.json` — the generated payload, served by Vite at `/countries.paths.json` in development and copied into `dist/` during production builds. The multiplayer middleware reads the same file for country prompts.
 
 The build script accepts these environment variables:
@@ -44,25 +44,35 @@ The build script accepts these environment variables:
 | `COUNTRY_MAP_MAX_RINGS_PER_COUNTRY` | `20`    | Maximum rings (islands) kept per country           |
 | `COUNTRY_MAP_DECIMALS`              | `3`     | Coordinate decimal places in the output            |
 
-To refresh the map data, replace `data/countries.geo.json` with an updated GeoJSON feature collection and run `pnpm build:map`. Every named feature must include Polygon or MultiPolygon geometry so the full data set is visible and guessable in-game.
+To refresh the map data, replace `data/countries.geo.json` with an updated GeoJSON feature collection and run `vp run build:map`. Every named feature must include Polygon or MultiPolygon geometry so the full data set is visible and guessable in-game.
 
 ## Project setup
 
+Install [Vite+](https://viteplus.dev/guide/), then run:
+
 ```sh
-pnpm install
+vp install
+```
+
+Vite+ manages Node.js **26.8.2** and pnpm **12.4.1**, pinned in
+`package.json` under `devEngines`. To update both to the latest releases:
+
+```sh
+vp env pin latest pnpm@latest --force
+vp install
 ```
 
 ## Development
 
 ```sh
-pnpm dev
+vp dev
 ```
 
 ### Multiplayer server
 
 > **Note:** the multiplayer backend is implemented as Vite middleware
-> (`server/multiplayer.ts`), so it only runs inside `vp dev` (`pnpm dev`) and
-> `vp preview` (`pnpm preview`). There is no standalone production server —
+> (`server/multiplayer.ts`), so it only runs inside `vp dev` and
+> `vp preview`. There is no standalone production server —
 > deploying only the static `dist/` output ships a working solo game but no
 > multiplayer. Rooms are kept in memory, so restarting the server clears
 > active rooms; idle rooms are swept automatically after 30 minutes.
@@ -82,17 +92,19 @@ The dev and preview servers provide:
 ## Build and checks
 
 ```sh
-pnpm build      # build:map + type-check + vite build
-pnpm test:unit  # vitest
-pnpm lint       # oxlint (via vp)
-pnpm format     # oxfmt (via vp)
+vp run build  # build:map + type-check + Vite build
+vp test       # unit tests
+vp check      # format, lint, and type checks
+vp fmt        # format files
 ```
 
 Unit tests cover the shared utilities, the server room engine, the solo game
 engine, the map data build script, and app routing. Browser end-to-end tests
 are a possible follow-up.
 
-CI (`.github/workflows/ci.yml`) runs `vp check`, `vp test`, and `pnpm build` on every push and pull request.
+CI (`.github/workflows/ci.yml`) uses `setup-vp` to resolve the same pinned Node.js
+and pnpm versions, then runs `vp check`, `vp test`, and `vp run build` on every
+push to `master` and pull request.
 
 ## App routes
 

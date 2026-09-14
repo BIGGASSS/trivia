@@ -1,14 +1,13 @@
+# Vite+ manages Node.js; avoid a second pnpm-managed runtime.
+runtimeOnFail: ignore
+
 catalog:
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.2
-  vitest: 4.1.9
-  vite-plus: 0.2.2
+  vite: npm:@voidzero-dev/vite-plus-core@0.3.1
+  vite-plus: 0.3.1
 overrides:
-  vite: "catalog:"
-  vitest: "catalog:"
+  vite@*: "catalog:"
 peerDependencyRules:
   allowAny:
     - vite
-    - vitest
   allowedVersions:
     vite: "*"
-    vitest: "*"

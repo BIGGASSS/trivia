@@ -11,23 +11,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Set up Vite+, Node.js, and pnpm
+        uses: voidzero-dev/setup-vp@v1.20.0
         with:
-          node-version: 24
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.9.0
+          cache: true
+          run-install: false
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: vp install --frozen-lockfile
 
       - name: Format, lint, and type check
-        run: pnpm exec vp check
+        run: vp check
 
       - name: Unit tests
-        run: pnpm exec vp test
+        run: vp test
 
       - name: Build
-        run: pnpm build
+        run: vp run build
