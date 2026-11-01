@@ -255,7 +255,7 @@ export const useSoloGame = (
     lastSelectedCountryId.value = null;
     isRoundLocked.value = false;
     soloTimeLeft.value = roundDurationSeconds;
-    feedbackMessage.value = `Click ${country.name} before the timer runs out.`;
+    feedbackMessage.value = "Click it on the map. Drag to pan, scroll or pinch to zoom.";
     startSoloRoundTimer();
   }
 

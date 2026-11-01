@@ -1,73 +1,159 @@
 /*
  * Styles shared by the country-game components (setup panel, lobby, HUD,
- * results) plus the `.map-panel--playing` layout variants that reach into
- * child components. Imported globally (once) by WorldMap.vue; every selector
- * is prefixed with `.map-panel` so nothing leaks outside the game panel.
- * Rules keep the same relative order as the original single-file styles.
+ * results) plus the `.map-panel--playing` layout that reaches into child
+ * components. Imported once by WorldMap.vue; every selector is prefixed
+ * with `.map-panel` so nothing leaks outside the game panel.
  */
 
-/* ---- .map-panel--playing layout variants ------------------------------- */
+/* ---- headings and copy --------------------------------------------------- */
+
+.map-panel h2 {
+  color: var(--paper);
+  font-size: var(--step-4);
+  font-stretch: 85%;
+  font-variation-settings: "opsz" 72;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  text-wrap: balance;
+}
+
+.map-panel .setup-copy {
+  max-width: 60ch;
+  color: var(--text-muted);
+  font-size: 1.125rem;
+  line-height: 1.5;
+}
+
+/* ---- form fields ---------------------------------------------------------- */
+
+.map-panel .field {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.map-panel .field-label {
+  color: var(--paper);
+  font-weight: 600;
+}
+
+.map-panel .field input {
+  width: 100%;
+  min-height: 3rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-control);
+  padding: 0.6rem 0.8rem;
+  color: var(--paper);
+  background: rgb(10 28 69 / 0.45);
+  font-size: 1.0625rem;
+}
+
+.map-panel .field input::placeholder {
+  color: var(--cyan-500);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.map-panel .field input:hover {
+  border-color: var(--paper-dim);
+}
+
+.map-panel .field input:focus-visible {
+  border-color: var(--paper);
+}
+
+.map-panel .field small {
+  color: var(--text-muted);
+  font-size: var(--step--1);
+}
+
+/* ---- actions and messages ------------------------------------------------ */
+
+.map-panel .setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: center;
+}
+
+.map-panel .server-error,
+.map-panel .server-warning {
+  margin: 0;
+  border-left: 3px solid currentColor;
+  padding: 0.2rem 0 0.2rem 0.75rem;
+  line-height: 1.4;
+}
+
+.map-panel .server-error {
+  color: var(--wrong);
+}
+
+.map-panel .server-warning {
+  color: var(--signal);
+}
+
+.map-panel .waiting-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3.25rem;
+  color: var(--text-muted);
+}
+
+/* ---- player cards (lobby roster + in-game strip) ------------------------- */
+
+.map-panel .player-score-card {
+  display: grid;
+  align-content: start;
+  gap: 0.15rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-surface);
+  padding: 0.75rem 0.9rem;
+}
+
+.map-panel .player-score-card strong {
+  overflow: hidden;
+  color: var(--paper);
+  font-size: 1.0625rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-panel .player-score-card--active {
+  border-color: var(--paper-dim);
+  background: rgb(238 242 239 / 0.06);
+}
+
+.map-panel .player-score-card--answered {
+  border-color: var(--correct);
+}
+
+.map-panel .player-turn-label {
+  color: var(--text-muted);
+  font-size: var(--step--1);
+}
+
+/* ---- in-game layout -------------------------------------------------------
+ * Sidebar (prompt, timer, score, actions) on the left; map fills the rest.
+ */
 
 .map-panel.map-panel--playing .game-header {
   display: flex;
   grid-row: 1 / -1;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: 1.25rem;
   min-height: 0;
-  margin-bottom: 0;
   overflow: auto;
-  padding-right: 0.15rem;
-}
-
-.map-panel.map-panel--playing .prompt-card,
-.map-panel.map-panel--playing .scoreboard,
-.map-panel.map-panel--playing .game-actions {
-  flex-shrink: 0;
-  padding: clamp(0.75rem, 1.2vw, 1rem);
+  padding: 0.25rem 0.25rem 0.25rem 0;
 }
 
 .map-panel.map-panel--playing .prompt-card {
   flex: 1 1 auto;
 }
 
-.map-panel.map-panel--playing h2 {
-  font-size: clamp(1.45rem, 2.2vw, 2.35rem);
-}
-
-.map-panel.map-panel--playing .round-meta {
-  margin-top: 0.4rem;
-}
-
-.map-panel.map-panel--playing .timer {
-  margin-top: 0.55rem;
-}
-
-.map-panel.map-panel--playing .feedback {
-  min-height: 0;
-  margin-top: 0.45rem;
-}
-
-.map-panel.map-panel--playing .scoreboard {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
-  min-width: 0;
-}
-
-.map-panel.map-panel--playing .scoreboard dd {
-  font-size: 1.35rem;
-}
-
-.map-panel.map-panel--playing .game-actions {
-  flex-flow: row wrap;
-  justify-content: flex-start;
-}
-
 .map-panel.map-panel--playing .player-strip {
   grid-column: 2;
   grid-row: 2;
-  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-  gap: 0.5rem;
-  margin-bottom: 0;
 }
 
 .map-panel.map-panel--playing .map-stage {
@@ -78,8 +164,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-radius: 18px;
-  background: var(--color-ocean);
+  border-radius: var(--radius-surface);
   isolation: isolate;
   overscroll-behavior: contain;
   touch-action: none;
@@ -91,219 +176,6 @@
   aspect-ratio: auto;
 }
 
-/* ---- shared panel scaffolding ------------------------------------------ */
-
-.map-panel .setup-panel,
-.map-panel .lobby-panel,
-.map-panel .results-panel,
-.map-panel .server-setup {
-  display: grid;
-  gap: clamp(1rem, 2vw, 1.35rem);
-}
-
-.map-panel .setup-header,
-.map-panel .lobby-header,
-.map-panel .results-copy,
-.map-panel .prompt-card,
-.map-panel .scoreboard,
-.map-panel .game-actions,
-.map-panel .setting-field,
-.map-panel .player-name-field,
-.map-panel .mode-card,
-.map-panel .leaderboard-row,
-.map-panel .performance-chart,
-.map-panel .player-score-card,
-.map-panel .room-code-card,
-.map-panel .server-setup {
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-}
-
-.map-panel .setup-header,
-.map-panel .lobby-header,
-.map-panel .results-copy,
-.map-panel .prompt-card,
-.map-panel .performance-chart,
-.map-panel .server-setup {
-  padding: clamp(1rem, 2vw, 1.5rem);
-}
-
-.map-panel .setup-copy,
-.map-panel .results-copy p:not(.eyebrow) {
-  max-width: 58rem;
-  margin-top: 0.75rem;
-  color: var(--color-slate);
-  font-size: 1.05rem;
-  font-weight: 700;
-}
-
-.map-panel .mode-grid,
-.map-panel .settings-grid,
-.map-panel .server-form-grid,
-.map-panel .lobby-grid {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.map-panel .setup-actions,
-.map-panel .results-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.map-panel .server-error,
-.map-panel .server-warning {
-  margin: 0;
-  font-weight: 800;
-}
-
-.map-panel .server-error {
-  color: var(--color-danger-strong);
-}
-
-.map-panel .server-warning {
-  color: var(--color-warning-strong);
-}
-
-.map-panel .waiting-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2.65rem;
-  border-radius: 999px;
-  padding: 0 1rem;
-  color: var(--color-slate);
-  background: rgba(226, 232, 240, 0.85);
-  font-weight: 900;
-}
-
-.map-panel .eyebrow {
-  margin-bottom: 0.25rem;
-  color: var(--color-primary);
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.map-panel h2 {
-  color: var(--color-ink);
-  font-size: clamp(1.75rem, 4vw, 3.25rem);
-  font-weight: 900;
-  line-height: 1;
-}
-
-/* ---- shared buttons ------------------------------------------------------ */
-
-.map-panel button {
-  cursor: pointer;
-  border: 0;
-  border-radius: 999px;
-  padding: 0.7rem 1.1rem;
-  color: var(--color-surface);
-  background: var(--color-primary);
-  font-weight: 900;
-  transition:
-    background-color 160ms ease,
-    opacity 160ms ease,
-    transform 160ms ease;
-}
-
-.map-panel button:hover,
-.map-panel button:focus-visible {
-  background: var(--color-primary-strong);
-  transform: translateY(-1px);
-}
-
-.map-panel button:focus-visible,
-.map-panel input:focus-visible,
-.map-panel .mode-card:has(input:focus-visible) {
-  outline: 3px solid var(--color-ink);
-  outline-offset: 3px;
-}
-
-.map-panel button:disabled,
-.map-panel button:disabled:hover,
-.map-panel button:disabled:focus-visible {
-  cursor: not-allowed;
-  opacity: 0.45;
-  transform: none;
-}
-
-.map-panel .secondary-button {
-  color: var(--color-ink-soft);
-  background: var(--color-surface-muted);
-  box-shadow: none;
-}
-
-.map-panel .secondary-button:hover,
-.map-panel .secondary-button:focus-visible {
-  background: var(--color-surface-hover);
-}
-
-.map-panel .start-button {
-  padding: 0.9rem 1.35rem;
-}
-
-/* ---- shared player score cards (lobby + in-game strip) ------------------ */
-
-.map-panel .player-score-card {
-  display: grid;
-  gap: 0.2rem;
-  padding: 0.85rem 1rem;
-}
-
-.map-panel .player-score-card--active {
-  border-color: rgba(37, 99, 235, 0.85);
-  background: rgba(219, 234, 254, 0.92);
-}
-
-.map-panel .player-score-card--answered {
-  border-color: rgba(34, 197, 94, 0.6);
-}
-
-.map-panel .player-turn-label {
-  color: var(--color-primary);
-  font-size: 0.68rem;
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.map-panel .player-score-card strong {
-  color: var(--color-ink);
-  font-size: 1.05rem;
-}
-
-.map-panel .player-score-card span:last-child {
-  color: var(--color-slate);
-  font-weight: 900;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .map-panel button,
-  .map-panel .mode-card,
-  .map-panel .timer-track span {
-    transition: none;
-  }
-
-  .map-panel button:hover,
-  .map-panel button:focus-visible,
-  .map-panel .mode-card:hover,
-  .map-panel .mode-card:focus-within {
-    transform: none;
-  }
-
-  .map-panel .player-name-tag::after {
-    animation: none;
-  }
-}
-
-/* ---- responsive layout -------------------------------------------------- */
-
 @media (max-width: 820px) {
   .map-panel.map-panel--playing .game-header,
   .map-panel.map-panel--playing .map-stage,
@@ -313,7 +185,9 @@
 
   .map-panel.map-panel--playing .game-header {
     grid-row: 1;
+    gap: 0.85rem;
     overflow: visible;
+    padding: 0;
   }
 
   .map-panel.map-panel--playing .map-stage {
@@ -333,35 +207,23 @@
     min-height: inherit;
     aspect-ratio: auto;
   }
+
+  .map-panel.map-panel--playing .feedback {
+    min-height: 0;
+  }
 }
 
 @media (max-width: 560px) {
-  .map-panel.map-panel--playing .prompt-card,
-  .map-panel.map-panel--playing .scoreboard,
-  .map-panel.map-panel--playing .game-actions,
-  .map-panel .player-score-card {
-    padding: 0.7rem;
-  }
-
-  .map-panel.map-panel--playing h2 {
-    font-size: 1.25rem;
-  }
-
-  .map-panel.map-panel--playing .scoreboard {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.45rem;
-  }
-
-  .map-panel.map-panel--playing .scoreboard dt {
-    font-size: 0.62rem;
+  .map-panel.map-panel--playing .target-country {
+    font-size: var(--step-3);
   }
 
   .map-panel.map-panel--playing .scoreboard dd {
-    font-size: 1.05rem;
+    font-size: var(--step-1);
   }
 
-  .map-panel.map-panel--playing .game-actions button {
-    flex: 1 1 auto;
-    padding: 0.65rem 0.75rem;
+  .map-panel.map-panel--playing .game-actions .btn {
+    padding-inline: 0.5rem;
+    white-space: nowrap;
   }
 }

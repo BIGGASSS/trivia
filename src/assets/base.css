@@ -1,34 +1,52 @@
 /*
- * Minimal global reset and base styles for World Trivia.
- * Design tokens used across components live in :root below; every value
- * matches the exact colors previously hardcoded throughout the app.
+ * World Trivia design tokens and base styles.
+ *
+ * Direction: a cyanotype field chart. The whole app is the blue of a
+ * sun-printed survey sheet; land is the pale paper left unexposed; one
+ * signal-yellow ink is reserved for "the country you were asked for".
+ * Everything else stays quiet so that yellow always means the answer.
  */
 :root {
-  --color-ink: #0f172a;
-  --color-ink-soft: #1e293b;
-  --color-slate-strong: #334155;
-  --color-slate: #475569;
-  --color-slate-muted: #64748b;
-  --color-slate-faint: #94a3b8;
-  --color-surface: #ffffff;
-  --color-surface-soft: #f8fafc;
-  --color-surface-muted: #e2e8f0;
-  --color-surface-hover: #cbd5e1;
-  --color-primary: #2563eb;
-  --color-primary-strong: #1d4ed8;
-  --color-accent: #ea580c;
-  --color-warm: #f97316;
-  --color-success: #22c55e;
-  --color-success-strong: #15803d;
-  --color-success-deep: #14532d;
-  --color-success-dim: #166534;
-  --color-danger: #ef4444;
-  --color-danger-strong: #b91c1c;
-  --color-danger-deep: #7f1d1d;
-  --color-danger-dim: #991b1b;
-  --color-warning-strong: #b45309;
-  --color-warning-dim: #92400e;
-  --color-ocean: #c7e8ff;
+  /* Ground: Prussian-blue cyanotype, from deepest (ocean) to lightest rule. */
+  --cyan-950: #0a1c45;
+  --cyan-900: #0e2557;
+  --cyan-800: #143270;
+  --cyan-700: #1a3d84;
+  --cyan-500: #4a6fb3;
+  --cyan-300: #a9c0e3;
+
+  /* Paper: unexposed areas — land, primary text, primary controls. */
+  --paper: #eef2ef;
+  --paper-dim: #d3dee6;
+
+  /* Inks with meaning. */
+  --signal: #ffd34d; /* the target country */
+  --correct: #7fe0b6;
+  --wrong: #ff8f7e;
+
+  --ink-on-paper: var(--cyan-900);
+  --text: var(--paper);
+  --text-muted: var(--cyan-300);
+  --rule: rgb(169 192 227 / 0.28);
+  --rule-strong: rgb(169 192 227 / 0.55);
+
+  --font-sans: "Bricolage Grotesque Variable", "Bricolage Grotesque", system-ui, sans-serif;
+
+  /* Type scale after The Elements of Typographic Style (px at 16px root). */
+  --step--1: 0.8125rem; /* 13 */
+  --step-0: 1rem; /* 16 */
+  --step-1: 1.3125rem; /* 21 */
+  --step-2: 1.5rem; /* 24 */
+  --step-3: 2.25rem; /* 36 */
+  --step-4: 3rem; /* 48 */
+  --step-5: 4.5rem; /* 72 */
+
+  --radius-control: 6px;
+  --radius-surface: 12px;
+
+  --focus-ring: 0 0 0 2px var(--cyan-900), 0 0 0 4px var(--paper);
+
+  color-scheme: dark;
 }
 
 *,
@@ -36,29 +54,121 @@
 *::after {
   box-sizing: border-box;
   margin: 0;
-  font-weight: normal;
+}
+
+html {
+  background: var(--cyan-800);
 }
 
 body {
   min-height: 100vh;
-  color: var(--color-ink);
-  background: var(--color-surface-soft);
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    Oxygen,
-    Ubuntu,
-    Cantarell,
-    "Fira Sans",
-    "Droid Sans",
-    "Helvetica Neue",
-    sans-serif;
-  font-size: 15px;
-  line-height: 1.6;
+  color: var(--text);
+  background: var(--cyan-800);
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  font-optical-sizing: auto;
+  font-weight: 400;
+  line-height: 1.5;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  color: var(--cyan-900);
+  background: var(--signal);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* ---- Buttons -------------------------------------------------------------
+ * Primary actions are paper on blue (inverted print). Secondary actions are
+ * outlined in the rule colour. Yellow is never used for controls.
+ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  border: 1px solid var(--paper);
+  border-radius: var(--radius-control);
+  padding: 0.55rem 1.1rem;
+  color: var(--ink-on-paper);
+  background: var(--paper);
+  font-size: var(--step-0);
+  font-weight: 650;
+  line-height: 1.1;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.btn:hover {
+  border-color: #fff;
+  background: #fff;
+}
+
+.btn--quiet {
+  border-color: var(--rule-strong);
+  color: var(--paper);
+  background: transparent;
+}
+
+.btn--quiet:hover {
+  border-color: var(--paper);
+  background: rgb(238 242 239 / 0.08);
+}
+
+.btn--large {
+  min-height: 3.25rem;
+  padding-inline: 1.5rem;
+  font-size: 1.0625rem;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:disabled:hover {
+  border-color: var(--paper);
+  background: var(--paper);
+}
+
+.btn--quiet:disabled:hover {
+  border-color: var(--rule-strong);
+  background: transparent;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+  }
 }

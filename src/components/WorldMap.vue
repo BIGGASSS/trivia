@@ -260,10 +260,18 @@ const roundSummary = computed(() => {
       return `${roomState.value.roundCount} rounds complete`;
     }
 
-    return `Round ${roomState.value.currentRound} of ${roomState.value.roundCount} · ${answeredPlayersCount.value}/${activeRoomPlayers.value.length} answered`;
+    return `Round ${roomState.value.currentRound} of ${roomState.value.roundCount}`;
   }
 
   return `Round ${currentRoundNumber.value} of ${totalRounds.value}`;
+});
+
+const answeredSummary = computed(() => {
+  if (roomState.value?.status !== "playing") {
+    return "";
+  }
+
+  return `${answeredPlayersCount.value} of ${activeRoomPlayers.value.length} players answered`;
 });
 
 const displayTimeLeft = computed(() => {
@@ -315,7 +323,7 @@ const displayFeedbackMessage = computed(() => {
   }
 
   if (room.status === "results") {
-    return "Game over! Check the final leaderboard.";
+    return "Match finished. See the final standings.";
   }
 
   if (displayTimeLeft.value <= 0 && !room.roundLocked) {
@@ -330,7 +338,7 @@ const displayFeedbackMessage = computed(() => {
     return "Answer submitted. Waiting for the round reveal.";
   }
 
-  return `Find ${room.currentCountryName ?? "the prompted country"} before the timer expires.`;
+  return "Click it on the map. Drag to pan, scroll or pinch to zoom.";
 });
 
 const displaySelectedCountryId = computed(() => {
@@ -489,7 +497,7 @@ onUnmounted(() => {
     aria-label="Country guessing minigame"
   >
     <div v-if="isLoading" class="map-message">Loading map…</div>
-    <div v-else-if="errorMessage" class="map-message" role="alert">
+    <div v-else-if="errorMessage" class="map-message map-message--error" role="alert">
       {{ errorMessage }}
     </div>
 
@@ -528,6 +536,7 @@ onUnmounted(() => {
           :self-name="multiplayerSelf?.name ?? null"
           :target-country-name="targetCountryName"
           :round-summary="roundSummary"
+          :answered-summary="answeredSummary"
           :time-left="displayTimeLeft"
           :timer-percent="timerPercent"
           :timer-is-low="timerIsLow"
@@ -579,35 +588,38 @@ onUnmounted(() => {
 
 <style scoped>
 .map-panel {
-  width: min(100%, 1400px);
-  padding: clamp(0.75rem, 2vw, 2rem);
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  border-radius: 24px;
-  background:
-    radial-gradient(circle at 15% 20%, rgba(125, 211, 252, 0.35), transparent 30%),
-    linear-gradient(135deg, rgba(248, 250, 252, 0.92), rgba(226, 232, 240, 0.86));
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.18);
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  width: min(100%, 76rem);
+  margin: 0 auto;
+  padding-block: clamp(1rem, 4vh, 3rem) clamp(2rem, 6vh, 4rem);
 }
 
 .map-panel--playing {
-  display: grid;
-  width: min(100%, 1680px);
-  grid-template-columns: minmax(17rem, 23rem) minmax(0, 1fr);
+  align-content: stretch;
+  justify-items: stretch;
+  width: 100%;
+  grid-template-columns: minmax(17rem, 22rem) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: clamp(0.6rem, 1.2vw, 1rem);
-  height: calc(100dvh - 5.25rem);
-  max-height: 52rem;
+  gap: clamp(0.75rem, 1.5vw, 1.25rem);
+  height: calc(100dvh - 5rem);
   min-height: 30rem;
-  padding: clamp(0.6rem, 1.2vw, 1rem);
+  padding: 0;
   overflow: hidden;
 }
 
 .map-message {
   display: grid;
-  min-height: min(70vh, 720px);
+  width: 100%;
+  min-height: min(60vh, 32rem);
   place-items: center;
-  color: var(--color-slate-strong);
-  font-size: clamp(1rem, 2vw, 1.25rem);
+  color: var(--text-muted);
+  font-size: var(--step-1);
+}
+
+.map-message--error {
+  color: var(--wrong);
 }
 
 @media (max-width: 820px) {
@@ -615,16 +627,8 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto auto;
     height: auto;
-    max-height: none;
     min-height: 0;
     overflow: visible;
-    padding: clamp(0.5rem, 2.5vw, 0.85rem);
-  }
-}
-
-@media (max-width: 560px) {
-  .map-panel {
-    border-radius: 18px;
   }
 }
 </style>

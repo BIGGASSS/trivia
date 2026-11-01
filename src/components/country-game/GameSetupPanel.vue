@@ -30,12 +30,10 @@ const roomCodeInput = defineModel<string>("roomCodeInput", { required: true });
 <template>
   <section class="setup-panel" aria-labelledby="setup-heading">
     <header class="setup-header">
-      <p class="eyebrow">Country guessing game</p>
       <h2 id="setup-heading">Choose how to play</h2>
       <p class="setup-copy">
-        Play solo in this browser, or create a multiplayer room for up to
-        {{ maximumPlayerCount }} players. Multiplayer rounds use a shared
-        {{ roundDurationSeconds }} second timer.
+        Each round names a country. Click it on the blank map within
+        {{ roundDurationSeconds }} seconds.
       </p>
     </header>
 
@@ -43,23 +41,22 @@ const roomCodeInput = defineModel<string>("roomCodeInput", { required: true });
       <label class="mode-card" :class="{ 'mode-card--active': selectedMode === 'solo' }">
         <input v-model="selectedMode" type="radio" value="solo" />
         <span class="mode-title">Solo</span>
-        <span class="mode-description">
-          A focused {{ defaultRoundCount }} round challenge against the timer.
-        </span>
+        <span class="mode-description">Just you and the clock, in this browser.</span>
       </label>
 
       <label class="mode-card" :class="{ 'mode-card--active': selectedMode === 'multiplayer' }">
         <input v-model="selectedMode" type="radio" value="multiplayer" />
-        <span class="mode-title">Multiplayer</span>
+        <span class="mode-title">With friends</span>
         <span class="mode-description">
-          Create or join a live room. Everyone guesses the same country at the same time.
+          {{ minimumMultiplayerPlayerCount }} to {{ maximumPlayerCount }} players race to find the
+          same country.
         </span>
       </label>
     </div>
 
-    <div class="settings-grid">
-      <label class="setting-field">
-        <span>Rounds</span>
+    <div class="setup-form">
+      <label class="field field--rounds">
+        <span class="field-label">Rounds</span>
         <input
           v-model.number="roundCountSetting"
           type="number"
@@ -67,124 +64,160 @@ const roomCodeInput = defineModel<string>("roomCodeInput", { required: true });
           :max="maximumRoundCount"
           inputmode="numeric"
         />
-        <small>
-          Default is {{ defaultRoundCount }} rounds; choose up to {{ maximumRoundCount }} to include
-          every loaded country.
-        </small>
+        <small>{{ defaultRoundCount }} is a quick game. Up to {{ maximumRoundCount }}.</small>
       </label>
 
-      <div class="setting-field setting-field--static">
-        <span>Time per round</span>
-        <strong>{{ roundDurationSeconds }}s</strong>
-        <small>The countdown is fixed for every round.</small>
-      </div>
-
-      <div v-if="selectedMode === 'multiplayer'" class="setting-field setting-field--static">
-        <span>Players</span>
-        <strong>{{ minimumMultiplayerPlayerCount }}–{{ maximumPlayerCount }}</strong>
-        <small>Rooms start after at least {{ minimumMultiplayerPlayerCount }} players join.</small>
-      </div>
-    </div>
-
-    <div v-if="selectedMode === 'solo'" class="setup-actions">
-      <button class="start-button" type="button" @click="emit('startSolo')">Start solo game</button>
-    </div>
-
-    <section v-else class="server-setup" aria-labelledby="server-multiplayer-heading">
-      <div class="server-setup-header">
-        <div>
-          <p class="eyebrow">Multiplayer</p>
-          <h3 id="server-multiplayer-heading">Play together online</h3>
-        </div>
-        <div class="segmented-control" aria-label="Multiplayer action">
-          <button
-            type="button"
-            :class="{ 'segmented-control__button--active': setupAction === 'create' }"
-            @click="setupAction = 'create'"
-          >
-            Create
-          </button>
-          <button
-            type="button"
-            :class="{ 'segmented-control__button--active': setupAction === 'join' }"
-            @click="setupAction = 'join'"
-          >
-            Join
+      <template v-if="selectedMode === 'solo'">
+        <div class="setup-actions">
+          <button class="btn btn--large start-button" type="button" @click="emit('startSolo')">
+            Start solo game
           </button>
         </div>
-      </div>
+      </template>
 
-      <div class="server-form-grid">
-        <label class="player-name-field">
-          <span>Your name</span>
-          <input v-model="playerName" type="text" placeholder="Player name" maxlength="24" />
-        </label>
+      <section v-else class="server-setup" aria-labelledby="server-multiplayer-heading">
+        <div class="server-setup-header">
+          <h3 id="server-multiplayer-heading">Room</h3>
+          <div class="segmented-control" role="group" aria-label="Multiplayer action">
+            <button
+              type="button"
+              :aria-pressed="setupAction === 'create'"
+              :class="{ 'segmented-control__button--active': setupAction === 'create' }"
+              @click="setupAction = 'create'"
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              :aria-pressed="setupAction === 'join'"
+              :class="{ 'segmented-control__button--active': setupAction === 'join' }"
+              @click="setupAction = 'join'"
+            >
+              Join
+            </button>
+          </div>
+        </div>
 
-        <label v-if="setupAction === 'join'" class="player-name-field">
-          <span>Room code</span>
-          <input
-            v-model="roomCodeInput"
-            type="text"
-            placeholder="ABC123"
-            maxlength="8"
-            autocomplete="off"
-          />
-        </label>
-      </div>
+        <div class="server-form-grid">
+          <label class="field">
+            <span class="field-label">Your name</span>
+            <input
+              v-model="playerName"
+              type="text"
+              placeholder="Player name"
+              maxlength="24"
+              autocomplete="nickname"
+            />
+          </label>
 
-      <p v-if="errorMessage" class="server-error" role="alert">
-        {{ errorMessage }}
-      </p>
+          <label v-if="setupAction === 'join'" class="field">
+            <span class="field-label">Room code</span>
+            <input
+              v-model="roomCodeInput"
+              class="field-input--code"
+              type="text"
+              placeholder="ABC123"
+              maxlength="8"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+            />
+          </label>
+        </div>
 
-      <div class="setup-actions">
-        <button
-          v-if="setupAction === 'create'"
-          class="start-button"
-          type="button"
-          :disabled="isBusy"
-          @click="emit('createRoom')"
-        >
-          {{ isBusy ? "Creating…" : "Create room" }}
-        </button>
-        <button
-          v-else
-          class="start-button"
-          type="button"
-          :disabled="isBusy"
-          @click="emit('joinRoom')"
-        >
-          {{ isBusy ? "Joining…" : canRetryRejoin ? "Retry rejoin" : "Join room" }}
-        </button>
-      </div>
-    </section>
+        <p v-if="errorMessage" class="setup-message" role="alert">
+          {{ errorMessage }}
+        </p>
+
+        <div class="setup-actions">
+          <button
+            v-if="setupAction === 'create'"
+            class="btn btn--large start-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('createRoom')"
+          >
+            {{ isBusy ? "Creating…" : "Create room" }}
+          </button>
+          <button
+            v-else
+            class="btn btn--large start-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('joinRoom')"
+          >
+            {{ isBusy ? "Joining…" : canRetryRejoin ? "Retry rejoin" : "Join room" }}
+          </button>
+          <small v-if="setupAction === 'create'" class="setup-hint">
+            You'll get a code to share once the room is ready.
+          </small>
+        </div>
+      </section>
+    </div>
   </section>
 </template>
 
 <style scoped>
+.setup-panel {
+  display: grid;
+  gap: clamp(1.5rem, 3vw, 2.25rem);
+  width: min(100%, 44rem);
+}
+
+.setup-header {
+  display: grid;
+  gap: 0.6rem;
+}
+
 .mode-grid {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 .mode-card {
   position: relative;
   display: grid;
-  gap: 0.45rem;
-  padding: 1rem;
+  align-content: start;
+  gap: 0.3rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-surface);
+  padding: 1.1rem 1.2rem 1.2rem 3rem;
   cursor: pointer;
   transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    transform 160ms ease;
+    border-color 140ms ease,
+    background-color 140ms ease;
 }
 
-.mode-card:hover,
-.mode-card:focus-within {
-  transform: translateY(-1px);
+/* The radio dot: a hollow ring that fills with paper when chosen. */
+.mode-card::before {
+  position: absolute;
+  top: 1.35rem;
+  left: 1.15rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: 50%;
+  content: "";
+}
+
+.mode-card:hover {
+  border-color: var(--paper-dim);
 }
 
 .mode-card.mode-card--active {
-  border-color: rgba(37, 99, 235, 0.85);
-  box-shadow: 0 18px 42px rgba(37, 99, 235, 0.16);
+  border-color: var(--paper);
+  background: rgb(238 242 239 / 0.07);
+}
+
+.mode-card.mode-card--active::before {
+  border-color: var(--paper);
+  background: var(--paper);
+  box-shadow: inset 0 0 0 3px var(--cyan-800);
+}
+
+.mode-card:has(input:focus-visible) {
+  box-shadow: var(--focus-ring);
 }
 
 .mode-card input {
@@ -196,18 +229,36 @@ const roomCodeInput = defineModel<string>("roomCodeInput", { required: true });
 }
 
 .mode-title {
-  color: var(--color-ink);
-  font-size: 1.2rem;
-  font-weight: 950;
+  color: var(--paper);
+  font-size: var(--step-1);
+  font-weight: 650;
+  line-height: 1.2;
 }
 
 .mode-description {
-  color: var(--color-slate);
-  font-weight: 700;
+  color: var(--text-muted);
 }
 
-.settings-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.setup-form {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.field--rounds {
+  max-width: 16rem;
+}
+
+.field--rounds input {
+  font-size: var(--step-2);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.server-setup {
+  display: grid;
+  gap: 1.25rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
 }
 
 .server-setup-header {
@@ -219,88 +270,73 @@ const roomCodeInput = defineModel<string>("roomCodeInput", { required: true });
 }
 
 .server-setup h3 {
-  color: var(--color-ink);
-  font-size: clamp(1.35rem, 2.5vw, 2.2rem);
-  font-weight: 950;
-  line-height: 1;
+  color: var(--paper);
+  font-size: var(--step-2);
+  font-weight: 650;
+  line-height: 1.1;
 }
 
 .segmented-control {
   display: inline-flex;
-  gap: 0.35rem;
-  padding: 0.35rem;
-  border-radius: 999px;
-  background: var(--color-surface-muted);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-control);
+  padding: 3px;
 }
 
 .segmented-control button {
-  color: var(--color-slate-strong);
+  min-height: 2.25rem;
+  border: 0;
+  border-radius: 4px;
+  padding: 0.35rem 1rem;
+  color: var(--text-muted);
   background: transparent;
-  box-shadow: none;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.segmented-control__button--active,
-.segmented-control__button--active:hover,
-.segmented-control__button--active:focus-visible {
-  color: var(--color-surface) !important;
-  background: var(--color-primary) !important;
+.segmented-control button:hover {
+  color: var(--paper);
+}
+
+.segmented-control button.segmented-control__button--active {
+  color: var(--ink-on-paper);
+  background: var(--paper);
 }
 
 .server-form-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.setting-field,
-.player-name-field {
   display: grid;
-  gap: 0.45rem;
-  padding: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
 }
 
-.setting-field span,
-.player-name-field span {
-  color: var(--color-slate-muted);
-  font-size: 0.75rem;
-  font-weight: 900;
-  letter-spacing: 0.08em;
+.field-input--code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
-.setting-field input,
-.setting-field select,
-.player-name-field input {
-  width: 100%;
-  border: 1px solid rgba(71, 85, 105, 0.24);
-  border-radius: 12px;
-  padding: 0.7rem 0.8rem;
-  color: var(--color-ink);
-  background: var(--color-surface);
-  font: inherit;
-  font-weight: 800;
+/* This slot carries both instructions ("Room ABC123 is ready…") and
+ * failures, so it reads as a neutral notice rather than an alarm. */
+.setup-message {
+  border-left: 3px solid var(--signal);
+  padding: 0.2rem 0 0.2rem 0.75rem;
+  color: var(--paper);
+  line-height: 1.4;
 }
 
-.setting-field strong {
-  color: var(--color-ink);
-  font-size: 2rem;
-  font-weight: 950;
-  line-height: 1;
+.setup-hint {
+  color: var(--text-muted);
+  font-size: var(--step--1);
 }
 
-.setting-field small {
-  color: var(--color-slate-muted);
-  font-weight: 700;
-}
-
-@media (max-width: 980px) {
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 700px) {
+@media (max-width: 640px) {
   .mode-grid,
   .server-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .field--rounds {
+    max-width: none;
   }
 }
 </style>
