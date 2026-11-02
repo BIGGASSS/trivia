@@ -29,6 +29,9 @@ jobs:
       - name: Build
         run: vp run build
 
+      - name: Build production server
+        run: vp run build:server
+
       - name: Install Chromium
         run: vp exec playwright install --with-deps chromium
 

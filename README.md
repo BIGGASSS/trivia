@@ -70,14 +70,13 @@ vp dev
 
 ### Multiplayer server
 
-> **Note:** the multiplayer backend is implemented as Vite middleware
-> (`server/multiplayer.ts`), so it only runs inside `vp dev` and
-> `vp preview`. There is no standalone production server —
-> deploying only the static `dist/` output ships a working solo game but no
-> multiplayer. Rooms are kept in memory, so restarting the server clears
-> active rooms; idle rooms are swept automatically after 30 minutes.
+The multiplayer backend (`server/multiplayer.ts`) is plain Node HTTP
+middleware. It's mounted into `vp dev` / `vp preview` by a Vite plugin, and
+into the standalone production server (`server/main.ts`) described below.
+Rooms are kept in memory, so restarting the server clears active rooms; idle
+rooms are swept automatically after 30 minutes.
 
-The dev and preview servers provide:
+The dev, preview, and production servers provide:
 
 - `GET /countries.paths.json` (static map data)
 - `POST /api/multiplayer/rooms`
@@ -88,6 +87,39 @@ The dev and preview servers provide:
 - `POST /api/multiplayer/rooms/:roomCode/guess`
 - `POST /api/multiplayer/rooms/:roomCode/skip`
 - `POST /api/multiplayer/rooms/:roomCode/leave`
+
+## Production
+
+Don't run `vp dev` (or `vp preview`) in production. Build the client and the
+server, then run the bundled server with plain Node:
+
+```sh
+vp run build          # client -> dist/
+vp run build:server   # server -> dist-server/main.mjs (dependencies inlined)
+vp run start          # node dist-server/main.mjs
+```
+
+The server serves `dist/` (with an `index.html` fallback for client routes and
+immutable caching for `assets/`) and the multiplayer API. Only `dist/` and
+`dist-server/` plus a Node.js runtime are needed at deploy time — no
+`node_modules`.
+
+| Variable     | Default                        |
+| ------------ | ------------------------------ |
+| `PORT`       | `3000`                         |
+| `HOST`       | `0.0.0.0`                      |
+| `STATIC_DIR` | `dist/` next to `dist-server/` |
+
+Deployment notes:
+
+- **Run a single instance.** Room state is in memory; multiple replicas or
+  serverless functions would each see different rooms.
+- **Use a host that allows long-lived connections** (VM, container, Fly,
+  Railway, Render, …). Room updates stream over SSE.
+- **Terminate TLS in a reverse proxy** (Caddy, nginx). Responses set
+  `X-Accel-Buffering: no` so nginx won't buffer SSE. Redact the
+  `sessionToken` query parameter from access logs (see below).
+- The server shuts down gracefully on `SIGTERM`/`SIGINT`.
 
 ### Multiplayer sessions and ordering
 
