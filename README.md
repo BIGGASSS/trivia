@@ -54,7 +54,7 @@ Install [Vite+](https://viteplus.dev/guide/), then run:
 vp install
 ```
 
-Vite+ manages Node.js **26.8.2** and pnpm **12.4.1**, pinned in
+Vite+ manages Node.js **26.13.0** and pnpm **12.4.1**, pinned in
 `package.json` under `devEngines`. To update both to the latest releases:
 
 ```sh
