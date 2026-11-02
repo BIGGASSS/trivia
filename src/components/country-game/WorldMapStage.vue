@@ -5,6 +5,7 @@ import type { CountryPath } from "@/types/game";
 import { useMapViewport } from "@/composables/useMapViewport";
 import { useRevealZoom } from "@/composables/useRevealZoom";
 import { getLargestSubpathBounds } from "@/utils/svg-path-bounds";
+import { buildGraticulePath, primeLinesPath } from "@/utils/graticule";
 
 export interface RevealTarget {
   key: string;
@@ -52,6 +53,8 @@ const { cancelRevealZoomAnimation, playMissedCountryRevealZoom } = useRevealZoom
   viewport,
   countriesRef,
 );
+
+const graticulePath = buildGraticulePath();
 
 let lastRevealZoomKey: string | null = null;
 
@@ -206,7 +209,7 @@ defineExpose({ resetZoom });
 
 <template>
   <div class="map-stage">
-    <div class="zoom-controls" aria-label="Map zoom controls">
+    <div class="zoom-controls" role="group" aria-label="Map zoom controls">
       <button
         class="zoom-button"
         type="button"
@@ -214,7 +217,7 @@ defineExpose({ resetZoom });
         :disabled="!canZoomOut"
         @click="zoomOut"
       >
-        −
+        <span class="zoom-glyph" aria-hidden="true">−</span>
       </button>
       <span class="zoom-level" aria-live="polite">{{ zoomPercent }}</span>
       <button
@@ -224,12 +227,12 @@ defineExpose({ resetZoom });
         :disabled="!canZoomIn"
         @click="zoomIn"
       >
-        +
+        <span class="zoom-glyph" aria-hidden="true">+</span>
       </button>
       <button class="zoom-reset" type="button" @click="resetZoom">Reset zoom</button>
     </div>
 
-    <p class="map-touch-hint" aria-hidden="true">Pinch to zoom · Drag to move</p>
+    <p class="map-touch-hint" aria-hidden="true">Pinch to zoom, drag to move</p>
 
     <svg
       ref="mapSvg"
@@ -247,6 +250,12 @@ defineExpose({ resetZoom });
       @lostpointercapture="handleMapPointerEnd"
     >
       <rect class="ocean" x="-180" y="-90" width="360" height="180" />
+      <path class="graticule" :d="graticulePath" vector-effect="non-scaling-stroke" />
+      <path
+        class="graticule graticule--prime"
+        :d="primeLinesPath"
+        vector-effect="non-scaling-stroke"
+      />
 
       <path
         v-for="(country, index) in countries"
@@ -280,68 +289,85 @@ defineExpose({ resetZoom });
 .zoom-controls {
   position: absolute;
   z-index: 2;
-  top: clamp(0.6rem, 1.6vw, 1rem);
-  left: clamp(0.6rem, 1.6vw, 1rem);
+  top: 0.75rem;
+  left: 0.75rem;
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.45rem;
-  border: 1px solid rgba(71, 85, 105, 0.22);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 14px 35px rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(16px);
+  gap: 2px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-control);
+  padding: 3px;
+  background: rgb(14 37 87 / 0.88);
+  backdrop-filter: blur(8px);
+}
+
+.zoom-controls button {
+  display: inline-grid;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  padding: 0 0.6rem;
+  color: var(--paper);
+  background: transparent;
+  font-size: var(--step--1);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.zoom-controls button:hover {
+  background: rgb(238 242 239 / 0.12);
+}
+
+.zoom-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.zoom-controls button:disabled:hover {
+  background: transparent;
 }
 
 .zoom-button {
-  display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
-  place-items: center;
   padding: 0;
+}
+
+.zoom-glyph {
   font-size: 1.25rem;
+  font-weight: 500;
   line-height: 1;
 }
 
 .zoom-level {
-  min-width: 4rem;
-  color: var(--color-ink);
-  font-size: 0.85rem;
-  font-weight: 900;
+  min-width: 3.25rem;
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
-.zoom-reset {
-  padding: 0.58rem 0.85rem;
-  color: var(--color-ink-soft);
-  background: var(--color-surface-muted);
-  box-shadow: none;
-}
-
-.zoom-reset:hover,
-.zoom-reset:focus-visible {
-  background: var(--color-surface-hover);
+.zoom-controls .zoom-reset {
+  margin-left: 2px;
+  border-left: 1px solid var(--rule);
+  border-radius: 0 4px 4px 0;
 }
 
 .map-touch-hint {
   position: absolute;
-  right: clamp(0.6rem, 1.6vw, 1rem);
-  bottom: clamp(0.6rem, 1.6vw, 1rem);
+  right: 0.75rem;
+  bottom: 0.75rem;
   z-index: 2;
   display: none;
-  max-width: calc(100% - 1.2rem);
+  max-width: calc(100% - 1.5rem);
   margin: 0;
-  border: 1px solid rgba(71, 85, 105, 0.18);
-  border-radius: 999px;
-  padding: 0.45rem 0.7rem;
-  color: var(--color-ink-soft);
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
-  font-size: 0.78rem;
-  font-weight: 900;
-  line-height: 1;
+  border-radius: var(--radius-control);
+  padding: 0.35rem 0.6rem;
+  color: var(--paper);
+  background: rgb(14 37 87 / 0.85);
+  font-size: var(--step--1);
+  line-height: 1.2;
   pointer-events: none;
-  backdrop-filter: blur(14px);
 }
 
 .world-map {
@@ -350,10 +376,11 @@ defineExpose({ resetZoom });
   height: auto;
   aspect-ratio: 2 / 1;
   overflow: hidden;
-  border-radius: 18px;
-  background: var(--color-ocean);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-surface);
+  background: var(--cyan-900);
   cursor: grab;
-  shape-rendering: optimizeSpeed;
+  shape-rendering: geometricPrecision;
   touch-action: none;
   user-select: none;
 }
@@ -363,15 +390,28 @@ defineExpose({ resetZoom });
 }
 
 .ocean {
-  fill: var(--color-ocean);
+  fill: var(--cyan-900);
+}
+
+.graticule {
+  fill: none;
+  stroke: var(--cyan-500);
+  stroke-width: 0.6;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.graticule--prime {
+  stroke-dasharray: 4 4;
+  opacity: 0.65;
 }
 
 .country {
   cursor: pointer;
-  fill: var(--color-surface-soft);
-  stroke: var(--color-slate);
+  fill: var(--paper-dim);
+  stroke: var(--cyan-700);
   stroke-linejoin: round;
-  stroke-width: 0.35;
+  stroke-width: 0.6;
   transition:
     fill 120ms ease,
     stroke 120ms ease;
@@ -385,39 +425,57 @@ defineExpose({ resetZoom });
 
 .country:hover,
 .country:focus-visible {
-  fill: #fde68a;
-  stroke: var(--color-ink-soft);
+  fill: #fff;
+  stroke: var(--cyan-900);
 }
 
 .country--correct,
 .country--correct:hover,
 .country--correct:focus-visible {
-  fill: var(--color-success);
-  stroke: var(--color-success-deep);
+  fill: var(--correct);
+  stroke: var(--cyan-950);
 }
 
 .country--incorrect,
 .country--incorrect:hover,
 .country--incorrect:focus-visible {
-  fill: var(--color-danger);
-  stroke: var(--color-danger-deep);
+  fill: var(--wrong);
+  stroke: var(--cyan-950);
 }
 
+/* The answer, after a miss, is shown in the same ink as the prompt text. */
 .country--missed-target,
 .country--missed-target:hover,
 .country--missed-target:focus-visible {
-  fill: var(--color-success);
-  stroke: var(--color-success-deep);
+  fill: var(--signal);
+  stroke: var(--cyan-950);
+  animation: target-pulse 1.4s ease-out 2;
+}
+
+@keyframes target-pulse {
+  0%,
+  100% {
+    stroke-width: 0.6;
+  }
+
+  35% {
+    stroke-width: 5;
+    stroke: var(--signal);
+  }
 }
 
 .country:focus-visible {
-  stroke: var(--color-ink);
+  stroke: var(--cyan-950);
   stroke-width: 2;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .country {
     transition: none;
+  }
+
+  .country--missed-target {
+    animation: none;
   }
 }
 

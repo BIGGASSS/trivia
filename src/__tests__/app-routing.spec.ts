@@ -169,7 +169,7 @@ describe("app routing", () => {
     wrapper = await mountApp("/");
 
     expect(wrapper.find(".home-page").exists()).toBe(true);
-    expect(wrapper.text()).toContain("Test how well you know the world.");
+    expect(wrapper.text()).toContain("Where is");
     expect(wrapper.find(".map-panel").exists()).toBe(false);
   });
 
@@ -245,7 +245,9 @@ describe("app routing", () => {
     ).toBe(true);
 
     // Leave the game via the Setup action.
-    const setupButton = wrapper.findAll("button").find((button) => button.text() === "Setup");
+    const setupButton = wrapper
+      .findAll("button")
+      .find((button) => button.text() === "Back to setup");
 
     await setupButton?.trigger("click");
     await flushPromises();
@@ -505,7 +507,7 @@ describe("app routing", () => {
         expect(wrapper.get(".target-country").text()).toBe(soloPrompt);
         expect(wrapper.get(".feedback").text()).toBe(soloFeedback);
         expect(wrapper.text()).not.toContain("Stale multiplayer answer feedback.");
-        expect(wrapper.text()).toContain("World map challenge");
+        expect(wrapper.find(".answered-meta").exists()).toBe(false);
         expect(wrapper.find(".player-strip").exists()).toBe(false);
         expect(wrapper.find(".results-panel").exists()).toBe(false);
         expect(window.localStorage.getItem(sessionStorageKey)).toBe(storedBefore);
@@ -690,7 +692,8 @@ describe("app routing", () => {
 
     it("updates answered totals using active membership, not connection or historical answers", async () => {
       wrapper = await restoreRoom(makePlayingRoom());
-      expect(wrapper.get(".round-meta").text()).toBe("Round 1 of 3 · 0/2 answered");
+      expect(wrapper.get(".round-meta").text()).toBe("Round 1 of 3");
+      expect(wrapper.get(".answered-meta").text()).toBe("0 of 2 players answered");
 
       MockEventSource.instances[0]!.emitState(
         makePlayingRoom({
@@ -710,7 +713,7 @@ describe("app routing", () => {
       );
       await flushPromises();
 
-      expect(wrapper.get(".round-meta").text()).toBe("Round 1 of 3 · 1/2 answered");
+      expect(wrapper.get(".answered-meta").text()).toBe("1 of 2 players answered");
       expect(wrapper.findAll(".player-score-card")).toHaveLength(3);
     });
   });

@@ -81,9 +81,42 @@ const roundPerformanceMeta: Record<
   correct: { label: "Correct", symbol: "✓" },
   incorrect: { label: "Wrong", symbol: "×" },
   skipped: { label: "Skipped", symbol: "–" },
-  timeout: { label: "Timed out", symbol: "⏱" },
-  empty: { label: "No result", symbol: "·" },
+  timeout: { label: "Timed out", symbol: "○" },
+  empty: { label: "No result", symbol: "" },
 };
+
+const winner = computed(() => leaderboard.value[0] ?? null);
+const isTie = computed(
+  () => leaderboard.value.length > 1 && leaderboard.value[1]?.score === leaderboard.value[0]?.score,
+);
+
+const headline = computed(() => {
+  const top = winner.value;
+
+  if (!top) {
+    return "Game over";
+  }
+
+  if (!props.isMultiplayer) {
+    return `${top.score} of ${props.roundCount} found`;
+  }
+
+  return isTie.value ? "It's a tie" : `${top.name} wins`;
+});
+
+const summary = computed(() => {
+  const top = winner.value;
+
+  if (!top) {
+    return "";
+  }
+
+  if (!props.isMultiplayer) {
+    return `${top.accuracyLabel} accuracy over ${props.roundCount} rounds of ${props.roundDurationSeconds} seconds.`;
+  }
+
+  return `${top.score} of ${props.roundCount} countries found. ${props.players.length} players, ${props.roundDurationSeconds} seconds a round.`;
+});
 
 const getRoundPerformance = (player: Player, round: number) => {
   const outcome =
@@ -100,71 +133,54 @@ const getRoundPerformance = (player: Player, round: number) => {
 
 <template>
   <section class="results-panel" aria-labelledby="leaderboard-heading">
-    <div class="results-copy">
-      <p class="eyebrow">Final leaderboard</p>
-      <h2 id="leaderboard-heading">Game over</h2>
-      <p>
-        {{ players.length }}
-        {{ players.length === 1 ? "player" : "players" }} completed {{ roundCount }} timed rounds
-        with {{ roundDurationSeconds }} seconds on the clock.
-      </p>
-    </div>
+    <header class="results-copy">
+      <p class="results-kicker">Game over</p>
+      <h2 id="leaderboard-heading">{{ headline }}</h2>
+      <p>{{ summary }}</p>
+    </header>
 
-    <ol class="leaderboard" aria-label="Final player scores">
+    <ol v-if="isMultiplayer" class="leaderboard" aria-label="Final player scores">
       <li
         v-for="(player, index) in leaderboard"
         :key="player.id"
         class="leaderboard-row"
         :class="{ 'leaderboard-row--winner': index === 0 }"
       >
-        <span class="leaderboard-rank">#{{ index + 1 }}</span>
+        <span class="leaderboard-rank">{{ index + 1 }}</span>
         <span class="leaderboard-player">
           <strong>{{ player.name }}</strong>
           <small>
-            {{ player.attempts }} turns · {{ player.accuracyLabel }} accuracy
-            <template v-if="player.isHost"> · Host</template>
+            {{ player.accuracyLabel }} accuracy over {{ player.attempts }} turns<template
+              v-if="player.isHost"
+              >, host</template
+            >
           </small>
         </span>
         <span class="leaderboard-score">
           {{ player.score }}
-          <small>points</small>
+          <small>{{ player.score === 1 ? "point" : "points" }}</small>
         </span>
       </li>
     </ol>
 
     <section class="performance-chart" aria-labelledby="performance-chart-heading">
       <div class="performance-chart-header">
-        <div>
-          <p class="eyebrow">Round-by-round</p>
-          <h3 id="performance-chart-heading">Performance chart</h3>
-        </div>
+        <h3 id="performance-chart-heading">Round by round</h3>
         <ul class="performance-legend" aria-label="Performance legend">
           <li>
-            <span
-              class="performance-legend-dot performance-cell--correct"
-              aria-hidden="true"
-            ></span>
+            <span class="performance-cell performance-cell--correct" aria-hidden="true">✓</span>
             Correct
           </li>
           <li>
-            <span
-              class="performance-legend-dot performance-cell--incorrect"
-              aria-hidden="true"
-            ></span>
+            <span class="performance-cell performance-cell--incorrect" aria-hidden="true">×</span>
             Wrong
           </li>
           <li>
-            <span
-              class="performance-legend-dot performance-cell--skipped"
-              aria-hidden="true"
-            ></span>
+            <span class="performance-cell performance-cell--skipped" aria-hidden="true">–</span>
             Skipped
           </li>
           <li>
-            <span
-              class="performance-legend-dot performance-cell--timeout"
-              aria-hidden="true"
-            ></span>
+            <span class="performance-cell performance-cell--timeout" aria-hidden="true">○</span>
             Timed out
           </li>
         </ul>
@@ -224,14 +240,15 @@ const getRoundPerformance = (player: Player, round: number) => {
     <div class="results-actions">
       <button
         v-if="!isMultiplayer || isHost"
+        class="btn btn--large"
         type="button"
         :disabled="isBusy"
         @click="emit('playAgain')"
       >
         {{ isMultiplayer ? "Restart room" : "Play again" }}
       </button>
-      <span v-else class="waiting-pill">Waiting for host to restart</span>
-      <button class="secondary-button" type="button" @click="emit('changeSetup')">
+      <span v-else class="waiting-pill">Waiting for the host to restart</span>
+      <button class="btn btn--quiet btn--large" type="button" @click="emit('changeSetup')">
         {{ isMultiplayer ? "Leave room" : "Change setup" }}
       </button>
     </div>
@@ -239,67 +256,98 @@ const getRoundPerformance = (player: Player, round: number) => {
 </template>
 
 <style scoped>
+.results-panel {
+  display: grid;
+  gap: clamp(1.5rem, 3vw, 2.25rem);
+  width: 100%;
+}
+
+.results-copy {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 48rem;
+}
+
+.results-kicker {
+  color: var(--text-muted);
+  font-size: var(--step-1);
+}
+
+.results-copy h2 {
+  font-size: clamp(2.5rem, 7vw, 5rem);
+  font-stretch: 80%;
+  font-variation-settings: "opsz" 96;
+  font-weight: 740;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+}
+
+.results-copy p:last-child {
+  color: var(--text-muted);
+  font-size: 1.125rem;
+}
+
 .leaderboard {
   display: grid;
-  gap: 0.75rem;
+  max-width: 48rem;
   padding: 0;
+  border-top: 1px solid var(--rule);
   list-style: none;
 }
 
 .leaderboard-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
   gap: 1rem;
   align-items: center;
-  padding: 1rem;
-}
-
-.leaderboard-row--winner {
-  border-color: rgba(234, 88, 12, 0.55);
-  background:
-    linear-gradient(135deg, rgba(255, 247, 237, 0.92), rgba(255, 255, 255, 0.88)),
-    rgba(255, 255, 255, 0.82);
+  padding-block: 0.9rem;
+  border-bottom: 1px solid var(--rule);
 }
 
 .leaderboard-rank {
-  display: grid;
-  min-width: 3rem;
-  height: 3rem;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--color-surface);
-  background: var(--color-primary);
-  font-weight: 950;
+  color: var(--text-muted);
+  font-size: var(--step-2);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
-.leaderboard-row--winner .leaderboard-rank {
-  background: var(--color-accent);
+.leaderboard-row--winner .leaderboard-rank,
+.leaderboard-row--winner .leaderboard-player strong {
+  color: var(--paper);
 }
 
 .leaderboard-player {
   display: grid;
-  gap: 0.2rem;
+  gap: 0.1rem;
 }
 
 .leaderboard-player strong {
-  color: var(--color-ink);
-  font-size: 1.2rem;
-  font-weight: 950;
+  color: var(--paper-dim);
+  font-size: var(--step-1);
+  font-weight: 650;
 }
 
-.leaderboard-player small,
-.leaderboard-score small {
-  color: var(--color-slate-muted);
-  font-weight: 800;
+.leaderboard-player small {
+  color: var(--text-muted);
+  font-size: var(--step--1);
 }
 
 .leaderboard-score {
   display: grid;
   justify-items: end;
-  color: var(--color-ink);
-  font-size: 2rem;
-  font-weight: 950;
+  color: var(--paper);
+  font-size: var(--step-3);
+  font-stretch: 80%;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
   line-height: 1;
+}
+
+.leaderboard-score small {
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  font-stretch: 100%;
+  font-weight: 400;
 }
 
 .performance-chart {
@@ -310,165 +358,173 @@ const getRoundPerformance = (player: Player, round: number) => {
 .performance-chart-header {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
+  gap: 0.5rem 2rem;
+  align-items: baseline;
 }
 
 .performance-chart h3 {
-  color: var(--color-ink);
-  font-size: clamp(1.35rem, 2.5vw, 2rem);
-  font-weight: 950;
-  line-height: 1;
+  color: var(--paper);
+  font-size: var(--step-2);
+  font-weight: 650;
 }
 
 .performance-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.55rem 0.85rem;
+  gap: 0.5rem 1rem;
   margin: 0;
   padding: 0;
-  color: var(--color-slate);
-  font-size: 0.85rem;
-  font-weight: 900;
+  color: var(--text-muted);
+  font-size: var(--step--1);
   list-style: none;
 }
 
 .performance-legend li {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
 }
 
-.performance-legend-dot {
-  display: inline-block;
-  width: 0.85rem;
-  height: 0.85rem;
-  border: 1px solid currentColor;
-  border-radius: 50%;
+.performance-legend .performance-cell {
+  width: 1.35rem;
+  height: 1.35rem;
+  font-size: 0.75rem;
 }
 
 .performance-table-wrap {
+  width: fit-content;
+  max-width: 100%;
   overflow-x: auto;
-  padding-bottom: 0.25rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-surface);
+  background: var(--cyan-900);
 }
 
 .performance-table {
-  width: 100%;
-  min-width: 52rem;
-  border-collapse: separate;
-  border-spacing: 0.35rem;
+  border-collapse: collapse;
 }
 
 .performance-table th,
 .performance-table td {
+  padding: 0.6rem 0.4rem;
   text-align: center;
-  vertical-align: middle;
+  vertical-align: bottom;
 }
 
 .performance-table thead th {
-  color: var(--color-slate-muted);
-  font-size: 0.72rem;
-  font-weight: 950;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  border-bottom: 1px solid var(--rule);
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  font-weight: 500;
 }
 
+.performance-table thead th:first-child {
+  text-align: left;
+}
+
+/* Country names read upward like labels on a chart axis. */
 .performance-table thead th:not(:first-child) {
-  min-width: 7rem;
-  max-width: 10rem;
-  color: var(--color-slate-strong);
-  font-size: 0.78rem;
-  letter-spacing: 0;
-  line-height: 1.15;
-  text-transform: none;
+  height: 9rem;
+  min-width: 2.75rem;
+  color: var(--paper-dim);
 }
 
 .performance-country-label {
-  display: -webkit-box;
+  display: inline-block;
+  max-height: 8.5rem;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.performance-table tbody tr + tr {
+  border-top: 1px solid var(--rule);
 }
 
 .performance-table tbody th {
   position: sticky;
   left: 0;
   z-index: 1;
-  display: grid;
-  gap: 0.2rem;
-  min-width: 10rem;
-  border-radius: 12px;
-  padding: 0.65rem 0.8rem;
-  background: var(--color-surface);
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+  min-width: 9rem;
+  padding-inline: 1rem;
+  background: var(--cyan-900);
   text-align: left;
+  vertical-align: middle;
+}
+
+.performance-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding-inline: 1rem;
+  background: var(--cyan-900);
+}
+
+.performance-table td {
+  vertical-align: middle;
 }
 
 .performance-player-name {
-  color: var(--color-ink);
-  font-weight: 950;
+  display: block;
+  color: var(--paper);
+  font-weight: 600;
 }
 
 .performance-table tbody small {
-  color: var(--color-slate-muted);
-  font-weight: 800;
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
 }
 
 .performance-cell {
   display: inline-grid;
-  width: 2.15rem;
-  height: 2.15rem;
+  width: 1.85rem;
+  height: 1.85rem;
   place-items: center;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  font-size: 1rem;
-  font-weight: 950;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: 700;
   line-height: 1;
 }
 
 .performance-cell--correct {
-  color: var(--color-success-dim);
-  background: #dcfce7;
+  color: var(--cyan-950);
+  background: var(--correct);
 }
 
 .performance-cell--incorrect {
-  color: var(--color-danger-dim);
-  background: #fee2e2;
+  color: var(--cyan-950);
+  background: var(--wrong);
 }
 
 .performance-cell--skipped {
-  color: var(--color-warning-dim);
-  background: #fef3c7;
+  border: 1px solid var(--rule-strong);
+  color: var(--paper-dim);
 }
 
 .performance-cell--timeout {
-  color: var(--color-slate);
-  background: var(--color-surface-muted);
+  border: 1px dashed var(--rule-strong);
+  color: var(--text-muted);
 }
 
 .performance-cell--empty {
-  color: var(--color-slate-faint);
-  background: var(--color-surface-soft);
+  border: 1px dotted var(--rule);
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
+.results-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
 }
 
 @media (max-width: 560px) {
   .leaderboard-row {
-    grid-template-columns: auto 1fr;
-  }
-
-  .leaderboard-score {
-    grid-column: 2;
-    justify-items: start;
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    gap: 0.6rem;
   }
 }
 </style>
