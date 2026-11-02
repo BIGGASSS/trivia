@@ -48,12 +48,26 @@ export const createProductionServer = ({
   });
 
   const server = createServer((request, response) => {
-    response.setHeader("X-Content-Type-Options", "nosniff");
-    multiplayer(request, response, () => {
-      assets(request, response, () => {
-        response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("Not found");
+    // Per-request error boundary: a throwing handler must fail this request,
+    // not crash the process (which would drop every in-memory room). Vite's
+    // Connect stack provided this in dev/preview.
+    try {
+      response.setHeader("X-Content-Type-Options", "nosniff");
+      multiplayer(request, response, () => {
+        assets(request, response, () => {
+          response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("Not found");
+        });
       });
-    });
+    } catch (error) {
+      console.error("Unhandled request error:", error);
+      if (response.headersSent) {
+        response.destroy();
+      } else {
+        response
+          .writeHead(500, { "Content-Type": "text/plain; charset=utf-8" })
+          .end("Internal server error");
+      }
+    }
   });
 
   const close = async () => {

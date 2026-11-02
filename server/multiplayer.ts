@@ -197,7 +197,13 @@ const routeRequest = async (
 export const createMultiplayerMiddleware =
   (manager: RoomManager) =>
   (request: IncomingMessage, response: ServerResponse, next: () => void) => {
-    const url = new URL(request.url ?? "/", "http://localhost");
+    // Raw request targets like `//[` are not valid URLs; `new URL` would throw
+    // synchronously, outside routeRequest's error handling.
+    const url = URL.parse(request.url ?? "/", "http://localhost");
+    if (!url) {
+      sendError(response, 400, "Malformed request URL.");
+      return;
+    }
     const segments = url.pathname.split("/").filter(Boolean);
     if (segments[0] !== "api" || segments[1] !== "multiplayer") {
       next();

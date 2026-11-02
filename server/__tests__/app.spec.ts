@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,6 +56,31 @@ describe("production server", () => {
     const payload = (await response.json()) as { room: { roomCode: string } };
     expect(payload.room.roomCode).toBeTruthy();
   });
+
+  /** Send a raw HTTP/1.1 request so the request target is not normalized by a client. */
+  const rawRequest = (target: string) =>
+    new Promise<string>((resolve, reject) => {
+      const { port } = app.server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write(`GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+      });
+      let data = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => (data += chunk));
+      socket.on("end", () => resolve(data));
+      socket.on("error", reject);
+    });
+
+  it.each(["//[", "/api/multiplayer/rooms//[", "/%E0%A4%A"])(
+    "rejects malformed request target %s without crashing",
+    async (target) => {
+      const raw = await rawRequest(target);
+      expect(raw).toMatch(/^HTTP\/1\.1 (200|400|404) /);
+      // The server is still up and serving normal requests.
+      const response = await fetch(`${baseUrl}/`);
+      expect(response.status).toBe(200);
+    },
+  );
 
   it("closes while an SSE stream is open", async () => {
     const created = (await (
