@@ -19,11 +19,14 @@ interface CountryPathPayload {
   countries?: Array<Partial<CountrySummary>>;
 }
 
-let countriesPromise: Promise<CountrySummary[]> | null = null;
-
-const loadCountries = async () => {
-  if (!countriesPromise) {
-    countriesPromise = readFile(countriesMapPath, "utf8")
+/**
+ * Lazily reads and caches country summaries from a `countries.paths.json` file.
+ * A failed read is not cached, so the next request retries.
+ */
+export const createCountriesLoader = (filePath: string) => {
+  let countriesPromise: Promise<CountrySummary[]> | null = null;
+  return async () => {
+    countriesPromise ??= readFile(filePath, "utf8")
       .then((contents) => {
         const data = JSON.parse(contents) as CountryPathPayload;
         return (data.countries ?? [])
@@ -40,8 +43,15 @@ const loadCountries = async () => {
         countriesPromise = null;
         throw error;
       });
-  }
-  return countriesPromise;
+    return countriesPromise;
+  };
+};
+
+/** Periodically drops idle rooms. Returns a function that stops the sweep. */
+export const startRoomSweep = (manager: RoomManager) => {
+  const interval = setInterval(() => manager.sweepStaleRooms(), roomSweepIntervalMilliseconds);
+  interval.unref();
+  return () => clearInterval(interval);
 };
 
 const handleRoomEvents = (
@@ -201,14 +211,11 @@ export const createMultiplayerMiddleware =
 // Module-level singletons keep Vite reconfiguration from duplicating managers
 // or sweep intervals. Tests inject their own manager and explicitly dispose it.
 let sharedManager: RoomManager | null = null;
-let sweepInterval: ReturnType<typeof setInterval> | null = null;
 
 const getSharedManager = () => {
-  sharedManager ??= createRoomManager({ loadCountries });
-  if (!sweepInterval) {
-    const manager = sharedManager;
-    sweepInterval = setInterval(() => manager.sweepStaleRooms(), roomSweepIntervalMilliseconds);
-    sweepInterval.unref();
+  if (!sharedManager) {
+    sharedManager = createRoomManager({ loadCountries: createCountriesLoader(countriesMapPath) });
+    startRoomSweep(sharedManager);
   }
   return sharedManager;
 };

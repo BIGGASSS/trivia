@@ -17,7 +17,7 @@ export default defineConfig({
     env: {
       builtin: true,
     },
-    ignorePatterns: ["**/dist/**", "**/dist-ssr/**", "**/coverage/**"],
+    ignorePatterns: ["**/dist/**", "**/dist-server/**", "**/dist-ssr/**", "**/coverage/**"],
     rules: {
       "vue/no-arrow-functions-in-watch": "error",
       "vue/no-computed-properties-in-data": "error",
@@ -131,6 +131,16 @@ export default defineConfig({
         specifier: "vite-plus/oxlint-plugin",
       },
     ],
+  },
+  // Production server bundle (`vp run build:server`); serves dist/ + multiplayer API.
+  pack: {
+    entry: { main: "server/main.ts" },
+    outDir: "dist-server",
+    format: "esm",
+    platform: "node",
+    sourcemap: true,
+    // Inline runtime deps (sirv) so the output runs without node_modules.
+    deps: { alwaysBundle: [/.*/], onlyBundle: false },
   },
   plugins: lazyPlugins(() => [vue(), multiplayerPlugin()]),
   resolve: {
