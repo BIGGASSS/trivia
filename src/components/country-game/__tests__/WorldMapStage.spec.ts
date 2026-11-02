@@ -352,4 +352,29 @@ describe("WorldMapStage", () => {
       wrapper.findAll("path.country").every((path) => path.attributes("tabindex") === "-1"),
     ).toBe(true);
   });
+
+  it("does not move the map when a touch tap focuses a country after pointerup", async () => {
+    const svg = wrapper.get<SVGSVGElement>("svg").element;
+    installScreenTransform(svg);
+    await zoomIn(6);
+    const initial = viewState(wrapper);
+    const paths = wrapper.findAll<SVGPathElement>("path.country");
+    const country = paths[0]!;
+
+    // Mobile order: pointerdown, pointerup, then compat mousedown (focus), click.
+    pointer(country.element, "pointerdown", 1, 300, 300, "touch");
+    pointer(country.element, "pointerup", 1, 300, 300, "touch");
+    country.element.focus();
+    await nextTick();
+    expect(viewState(wrapper)).toEqual(initial);
+
+    await country.trigger("click");
+    expect(wrapper.emitted("countryGuess")).toEqual([[countries[0]]]);
+
+    // Switching back to the keyboard restores focus-follow panning.
+    await country.trigger("keydown", { key: "ArrowRight" });
+    await nextTick();
+    expect(document.activeElement).toBe(paths[1]?.element);
+    expect(viewState(wrapper).centerX).toBeCloseTo(145);
+  });
 });
