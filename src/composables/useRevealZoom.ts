@@ -1,7 +1,6 @@
 /**
  * Missed-country reveal animation: zoom out to the world view, zoom into the
- * missed country, hold, then restore the previous viewport. Logic moved
- * verbatim from the original WorldMap component.
+ * missed country, hold, then restore the previous viewport.
  */
 import type { Ref } from "vue";
 import { clamp } from "@shared/game-utils";
@@ -23,7 +22,6 @@ export const missedCountryRevealRoundDelayMilliseconds =
   200;
 const missedCountryRevealTargetFillRatio = 0.62;
 const missedCountryRevealMinimumSpan = 0.75;
-const missedCountryRevealZoomBoost = 1.15;
 
 const easeInOutCubic = (progress: number) =>
   progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
@@ -47,10 +45,7 @@ export const useRevealZoom = (viewport: MapViewport, countries: Ref<CountryPath[
     return getLargestSubpathBounds(country.path);
   };
 
-  const getMissedCountryRevealTarget = (
-    countryId: string,
-    restoreState: MapViewState,
-  ): MapViewState | null => {
+  const getMissedCountryRevealTarget = (countryId: string): MapViewState | null => {
     const bounds = getCountryFocusBounds(countryId);
 
     if (!bounds) {
@@ -63,11 +58,9 @@ export const useRevealZoom = (viewport: MapViewport, countries: Ref<CountryPath[
       (mapBounds.width * missedCountryRevealTargetFillRatio) / countryWidth,
       (mapBounds.height * missedCountryRevealTargetFillRatio) / countryHeight,
     );
-    const zoom = clamp(
-      Math.max(fittedZoom, restoreState.zoom * missedCountryRevealZoomBoost),
-      minimumMapZoom,
-      maximumMapZoom,
-    );
+    // Fit independently of the previous zoom: an already magnified viewport
+    // must not crop the country we are revealing.
+    const zoom = clamp(fittedZoom, minimumMapZoom, maximumMapZoom);
     const center = {
       x: bounds.x + bounds.width / 2,
       y: bounds.y + bounds.height / 2,
@@ -211,7 +204,7 @@ export const useRevealZoom = (viewport: MapViewport, countries: Ref<CountryPath[
   const playMissedCountryRevealZoom = (countryId: string) => {
     const restoreState = getCurrentMapViewState();
     const defaultState = getDefaultMapViewState();
-    const targetState = getMissedCountryRevealTarget(countryId, restoreState);
+    const targetState = getMissedCountryRevealTarget(countryId);
 
     if (!targetState) {
       return false;

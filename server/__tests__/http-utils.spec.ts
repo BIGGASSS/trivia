@@ -1,7 +1,13 @@
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { maximumRequestBodyBytes, readJsonBody, sendError, sendJson } from "../http-utils";
+import {
+  maximumRequestBodyBytes,
+  readJsonBody,
+  sendCaughtError,
+  sendError,
+  sendJson,
+} from "../http-utils";
 import { HttpError } from "../room-manager";
 
 const asRequest = (chunks: Array<string | Buffer>) =>
@@ -44,6 +50,41 @@ describe("readJsonBody", () => {
     expect(error).toBeInstanceOf(HttpError);
     expect((error as HttpError).statusCode).toBe(413);
   });
+});
+
+describe("sendCaughtError", () => {
+  it("preserves intentional HTTP errors without logging", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = createMockResponse();
+      sendCaughtError(
+        response as unknown as ServerResponse,
+        new HttpError(429, "Too many streams."),
+        "Request failed",
+      );
+      expect(response.writeHead).toHaveBeenCalledWith(429, expect.any(Object));
+      expect(response.end).toHaveBeenCalledWith('{"error":"Too many streams."}');
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each([new Error("/private/path secret-token"), "private failure", null])(
+    "logs unexpected errors but sends only a generic 500",
+    (error) => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const response = createMockResponse();
+        sendCaughtError(response as unknown as ServerResponse, error, "Request failed");
+        expect(response.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+        expect(response.end).toHaveBeenCalledWith('{"error":"Internal server error."}');
+        expect(log).toHaveBeenCalledExactlyOnceWith("Request failed", error);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
 });
 
 describe("sendJson", () => {

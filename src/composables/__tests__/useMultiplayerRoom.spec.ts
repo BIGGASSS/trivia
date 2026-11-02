@@ -5,12 +5,18 @@ import { flushPromises, mount } from "@vue/test-utils";
 import type { VueWrapper } from "@vue/test-utils";
 import type { PublicRoomState } from "@shared/multiplayer-types";
 import type { GameMode, GamePhase } from "@/types/game";
-import { getStoredMultiplayerSession, saveMultiplayerSession } from "@/utils/multiplayer-session";
+import {
+  getPendingMultiplayerJoin,
+  getStoredMultiplayerSession,
+  savePendingMultiplayerJoin,
+  saveMultiplayerSession,
+} from "@/utils/multiplayer-session";
 import { useMultiplayerRoom } from "../useMultiplayerRoom";
 
 const roomSnapshot = (overrides: Partial<PublicRoomState> = {}): PublicRoomState => ({
   roomCode: "ABC123",
   revision: 1,
+  serverNow: Date.now(),
   matchId: "match-1",
   roundId: "round-1",
   status: "playing",
@@ -93,20 +99,7 @@ describe("multiplayer client lifecycle", () => {
   let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
   const source = () => MockEventSource.instances[MockEventSource.instances.length - 1]!;
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-    window.localStorage.clear();
-    MockEventSource.instances = [];
-    vi.stubGlobal("EventSource", MockEventSource);
-    fetchMock = vi.fn<typeof fetch>().mockImplementation(async () =>
-      json({
-        sessionToken: "private-token",
-        room: roomSnapshot(),
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    gamePhase = ref<GamePhase>("setup");
-    setGamePath = vi.fn<(path: string, replace?: boolean) => void>();
+  const mountClient = () => {
     wrapper = mount(
       defineComponent({
         setup() {
@@ -121,12 +114,376 @@ describe("multiplayer client lifecycle", () => {
         },
       }),
     );
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    window.localStorage.clear();
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    fetchMock = vi.fn<typeof fetch>().mockImplementation(async () =>
+      json({
+        sessionToken: "private-token",
+        room: roomSnapshot(),
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    gamePhase = ref<GamePhase>("setup");
+    setGamePath = vi.fn<(path: string, replace?: boolean) => void>();
+    mountClient();
   });
   afterEach(() => {
     wrapper?.unmount();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it.each(["retry", "reload"])(
+    "reuses a persisted join identity after a lost response (%s)",
+    async (retry) => {
+      client.multiplayerRoomCodeInput.value = "ABC123";
+      fetchMock.mockImplementationOnce(async (_url, init) => {
+        const body = JSON.parse(init?.body as string);
+        expect(getPendingMultiplayerJoin("ABC123")?.joinRequestId).toBe(body.joinRequestId);
+        expect(body.joinRequestId).toMatch(/^[0-9a-f-]{36}$/);
+        throw new TypeError("Lost response after admission");
+      });
+      await client.joinServerRoom();
+      const identity = getPendingMultiplayerJoin("ABC123")?.joinRequestId;
+      expect(identity).toBeTruthy();
+      client.multiplayerPlayerName.value = "Changed name after a lost response";
+      if (retry === "reload") {
+        wrapper?.unmount();
+        mountClient();
+        await client.restoreServerRoomFromRoute("ABC123");
+      } else {
+        await client.joinServerRoom();
+      }
+      expect(JSON.parse(fetchMock.mock.lastCall?.[1]?.body as string)).toEqual({
+        joinRequestId: identity,
+        playerName: "Player 1",
+      });
+      expect(getPendingMultiplayerJoin("ABC123")).toBeNull();
+      expect(getStoredMultiplayerSession("ABC123")?.sessionToken).toBe("private-token");
+    },
+  );
+
+  it("keeps the join identity across reload when the admitted session cannot be saved", async () => {
+    client.multiplayerRoomCodeInput.value = "ABC123";
+    const setItem = window.localStorage.setItem.bind(window.localStorage);
+    const storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (key, value) {
+        if (key === "world-trivia.multiplayer-sessions") throw new Error("Quota exceeded");
+        setItem(key, value);
+      });
+    await client.joinServerRoom();
+    const pending = getPendingMultiplayerJoin("ABC123");
+    expect(pending).not.toBeNull();
+    expect(getStoredMultiplayerSession("ABC123")).toBeNull();
+    wrapper?.unmount();
+    storage.mockRestore();
+    mountClient();
+    await client.restoreServerRoomFromRoute("ABC123");
+    expect(JSON.parse(fetchMock.mock.lastCall?.[1]?.body as string)).toEqual(pending);
+    expect(client.roomState.value?.playerId).toBe("host-id");
+    expect(getPendingMultiplayerJoin("ABC123")).toBeNull();
+  });
+
+  it("does not attempt a join unless its retry identity can be persisted", async () => {
+    client.multiplayerRoomCodeInput.value = "ABC123";
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("Storage unavailable");
+    });
+    await client.joinServerRoom();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(client.multiplayerErrorMessage.value).toContain("Storage unavailable");
+  });
+
+  it.each([404, 410, 400])(
+    "discards a definitively rejected join identity (%s)",
+    async (status) => {
+      client.multiplayerRoomCodeInput.value = "ABC123";
+      fetchMock.mockResolvedValueOnce(json({ error: "Rejected" }, status));
+      await client.joinServerRoom();
+      expect(getPendingMultiplayerJoin("ABC123")).toBeNull();
+    },
+  );
+
+  it.each(["network", "502", "malformed"])(
+    "preserves membership and exposes a retry after failed leave (%s)",
+    async (failure) => {
+      await client.createServerRoom();
+      setGamePath.mockClear();
+      if (failure === "network") fetchMock.mockRejectedValueOnce(new TypeError("Offline"));
+      if (failure === "502")
+        fetchMock.mockResolvedValueOnce(new Response("Gateway error", { status: 502 }));
+      if (failure === "malformed") fetchMock.mockResolvedValueOnce(new Response("not json"));
+      expect(await client.leaveServerRoom()).toBe(false);
+      expect(getStoredMultiplayerSession("ABC123")?.sessionToken).toBe("private-token");
+      expect(client.roomState.value).not.toBeNull();
+      expect(client.canRetryLeave.value).toBe(true);
+      expect(client.multiplayerErrorMessage.value).toContain("Retry leaving");
+      expect(setGamePath).not.toHaveBeenCalled();
+      source().state(roomSnapshot({ revision: 2 }));
+      expect(client.multiplayerErrorMessage.value).toContain("Retry leaving");
+      expect(await client.leaveServerRoom()).toBe(true);
+      expect(getStoredMultiplayerSession("ABC123")).toBeNull();
+      expect(client.canRetryLeave.value).toBe(false);
+    },
+  );
+
+  it("does not let an in-flight invalidation cancel a successful leave", async () => {
+    await client.createServerRoom();
+    const events = source();
+    const sync = deferred();
+    const leave = deferred();
+    fetchMock.mockReturnValueOnce(sync.promise).mockReturnValueOnce(leave.promise);
+    const syncRequest = client.syncCurrentRoomState();
+    const syncSignal = fetchMock.mock.lastCall?.[1]?.signal;
+    const leaveRequest = client.leaveServerRoom();
+    const leaveSignal = fetchMock.mock.lastCall?.[1]?.signal;
+    expect(syncSignal?.aborted).toBe(true);
+    events.onerror?.();
+    window.dispatchEvent(new Event("online"));
+    await client.submitServerAnswer("france");
+    await client.syncCurrentRoomState();
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    sync.resolve(json({ error: "Revoked by leave" }, 403));
+    await syncRequest;
+    expect(leaveSignal?.aborted).toBe(false);
+    leave.resolve(json({ ok: true }));
+    expect(await leaveRequest).toBe(true);
+    expect(client.roomState.value).toBeNull();
+    expect(getStoredMultiplayerSession("ABC123")).toBeNull();
+    expect(setGamePath).toHaveBeenLastCalledWith("/country-game/multiplayer");
+  });
+
+  it("ignores a late leave response after navigating to another room", async () => {
+    await client.createServerRoom();
+    const leave = deferred();
+    fetchMock.mockReturnValueOnce(leave.promise);
+    const request = client.leaveServerRoom();
+    const signal = fetchMock.mock.lastCall?.[1]?.signal;
+    await client.restoreServerRoomFromRoute("NEW123");
+    setGamePath.mockClear();
+    leave.resolve(json({ ok: true }));
+    expect(await request).toBe(false);
+    expect(signal?.aborted).toBe(true);
+    expect(client.multiplayerRoomCodeInput.value).toBe("NEW123");
+    expect(setGamePath).not.toHaveBeenCalled();
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it("does not erase a replacement pending join created while leaving", async () => {
+    await client.createServerRoom();
+    savePendingMultiplayerJoin("ABC123", { joinRequestId: "old-id", playerName: "Ada" });
+    const leave = deferred();
+    fetchMock.mockReturnValueOnce(leave.promise);
+    const request = client.leaveServerRoom();
+    const replacement = { joinRequestId: "replacement-id", playerName: "Grace" };
+    savePendingMultiplayerJoin("ABC123", replacement);
+    storeSession("replacement-token");
+    leave.resolve(json({ ok: true }));
+    expect(await request).toBe(true);
+    expect(getPendingMultiplayerJoin("ABC123")).toEqual(replacement);
+    expect(getStoredMultiplayerSession("ABC123")?.sessionToken).toBe("replacement-token");
+  });
+
+  it.each([403, 404, 410])(
+    "accepts confirmed revocation as a completed departure (%s)",
+    async (status) => {
+      await client.createServerRoom();
+      fetchMock.mockResolvedValueOnce(json({ error: "Already gone" }, status));
+      expect(await client.leaveServerRoom()).toBe(true);
+      expect(getStoredMultiplayerSession("ABC123")).toBeNull();
+      expect(client.roomState.value).toBeNull();
+    },
+  );
+
+  it.each([-300_000, 300_000])(
+    "uses server time for countdown and deadline sync with client skew %s",
+    async (skew) => {
+      const serverNow = Date.now() - skew;
+      const room = roomSnapshot({ serverNow, roundEndsAt: serverNow + 10_000 });
+      fetchMock.mockResolvedValueOnce(json({ sessionToken: "private-token", room }));
+      await client.createServerRoom();
+      await flushPromises();
+      expect(client.now.value).toBe(serverNow);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(client.now.value).toBe(serverNow + 5000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      source().dispatchEvent(
+        new MessageEvent("heartbeat", { data: JSON.stringify(serverNow + 5000) }),
+      );
+      await vi.advanceTimersByTimeAsync(5250);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("updates the server clock from heartbeats and ignores local wall-clock changes", async () => {
+    await client.createServerRoom();
+    const serverNow = Date.now() + 1000;
+    source().dispatchEvent(new MessageEvent("heartbeat", { data: JSON.stringify(serverNow) }));
+    expect(client.now.value).toBe(serverNow);
+    vi.setSystemTime(Date.now() - 120_000);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(client.now.value).toBe(serverNow + 250);
+  });
+
+  it.each([1, 2])(
+    "ignores a delayed HTTP clock sample while applying room revision %s",
+    async (revision) => {
+      const room = roomSnapshot({ serverNow: 1000, roundEndsAt: 11_000 });
+      fetchMock.mockResolvedValueOnce(json({ sessionToken: "private-token", room }));
+      await client.createServerRoom();
+      await flushPromises();
+      const pending = deferred();
+      fetchMock.mockReturnValueOnce(pending.promise);
+      const sync = client.syncCurrentRoomState();
+      source().dispatchEvent(new MessageEvent("heartbeat", { data: "6000" }));
+      expect(client.now.value).toBe(6000);
+
+      pending.resolve(json({ room: { ...room, revision } }));
+      await sync;
+      expect(client.roomState.value?.revision).toBe(revision);
+      expect(client.now.value).toBe(6000);
+      expect(Math.ceil((room.roundEndsAt! - client.now.value) / 1000)).toBe(5);
+
+      // A stale response must not postpone the deadline-triggered resync.
+      await vi.advanceTimersByTimeAsync(5250);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it.each([5000, 6000])("ignores stale or repeated heartbeat timestamp %s", async (timestamp) => {
+    await client.createServerRoom();
+    client.detachRoom();
+    // Detaching resets clock freshness, even if the next server clock is earlier.
+    fetchMock.mockResolvedValueOnce(
+      json({ sessionToken: "private-token", room: roomSnapshot({ serverNow: 1000 }) }),
+    );
+    await client.createServerRoom();
+    expect(client.now.value).toBe(1000);
+    source().dispatchEvent(new MessageEvent("heartbeat", { data: "6000" }));
+    await vi.advanceTimersByTimeAsync(250);
+    source().dispatchEvent(new MessageEvent("heartbeat", { data: String(timestamp) }));
+    expect(client.now.value).toBe(6250);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(client.now.value).toBe(6500);
+  });
+
+  it("retains a join identity after a detached admission attempt", async () => {
+    client.multiplayerRoomCodeInput.value = "ABC123";
+    const pending = deferred();
+    fetchMock.mockReturnValueOnce(pending.promise);
+    const request = client.joinServerRoom();
+    const identity = getPendingMultiplayerJoin("ABC123")?.joinRequestId;
+    client.detachRoom();
+    pending.resolve(json({ sessionToken: "private-token", room: roomSnapshot() }));
+    await request;
+    expect(getPendingMultiplayerJoin("ABC123")?.joinRequestId).toBe(identity);
+    expect(getStoredMultiplayerSession("ABC123")).toBeNull();
+    await client.joinServerRoom();
+    expect(JSON.parse(fetchMock.mock.lastCall?.[1]?.body as string).joinRequestId).toBe(identity);
+  });
+
+  it("preserves a failed departure's credential across reload for confirmed revocation", async () => {
+    await client.createServerRoom();
+    fetchMock.mockRejectedValueOnce(new TypeError("Lost leave response"));
+    await client.leaveServerRoom();
+    wrapper?.unmount();
+    mountClient();
+    fetchMock.mockResolvedValueOnce(json({ error: "Revoked" }, 403));
+    await client.restoreServerRoomFromRoute("ABC123");
+    expect(fetchMock.mock.lastCall?.[0]).toContain("sessionToken=private-token");
+    expect(getStoredMultiplayerSession("ABC123")).toBeNull();
+  });
+
+  it.each(["decode", "shape", "identity", "application"])(
+    "resyncs a broken %s event and does not let heartbeats hide it",
+    async (failure) => {
+      await client.createServerRoom();
+      const events = source();
+      const pending = deferred();
+      fetchMock.mockReturnValueOnce(pending.promise);
+      if (failure === "application")
+        setGamePath.mockImplementationOnce(() => {
+          throw new Error("Route failed");
+        });
+      if (failure === "decode")
+        events.dispatchEvent(new MessageEvent("state", { data: "invalid json" }));
+      else
+        events.state(
+          roomSnapshot({
+            revision: 2,
+            ...(failure === "shape"
+              ? { players: null as unknown as PublicRoomState["players"] }
+              : failure === "identity"
+                ? { playerId: "wrong" }
+                : {}),
+          }),
+        );
+      expect(client.roomConnectionState.value).toBe("reconnecting");
+      expect(events.close).toHaveBeenCalledOnce();
+      events.onopen?.();
+      events.dispatchEvent(new MessageEvent("heartbeat", { data: JSON.stringify(Date.now()) }));
+      expect(client.roomConnectionState.value).toBe("reconnecting");
+      pending.resolve(json({ room: roomSnapshot({ revision: 2 }) }));
+      await flushPromises();
+      expect(client.roomConnectionState.value).toBe("connected");
+      expect(source()).not.toBe(events);
+    },
+  );
+
+  it.each(["create", "join"])(
+    "recovers a malformed initial %s snapshot using the admitted session",
+    async (action) => {
+      client.multiplayerRoomCodeInput.value = "ABC123";
+      fetchMock.mockResolvedValueOnce(
+        json({ sessionToken: "private-token", room: { roomCode: "ABC123", playerId: "host-id" } }),
+      );
+      if (action === "create") await client.createServerRoom();
+      else await client.joinServerRoom();
+      await flushPromises();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.lastCall?.[0]).toContain("?sessionToken=private-token");
+      expect(fetchMock.mock.lastCall?.[1]?.method).toBe("GET");
+      expect(client.roomState.value?.roomCode).toBe("ABC123");
+      expect(client.roomConnectionState.value).toBe("connected");
+      expect(getPendingMultiplayerJoin("ABC123")).toBeNull();
+    },
+  );
+
+  it("offers a credential-based retry when initial decode recovery also fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        json({ sessionToken: "private-token", room: { roomCode: "ABC123", playerId: "host-id" } }),
+      )
+      .mockRejectedValueOnce(new TypeError("Offline during recovery"));
+    await client.createServerRoom();
+    await flushPromises();
+    expect(client.roomState.value).toBeNull();
+    expect(client.canRetryRejoin.value).toBe(true);
+    expect(client.multiplayerSetupAction.value).toBe("join");
+    window.dispatchEvent(new Event("online"));
+    await flushPromises();
+    expect(fetchMock.mock.lastCall?.[1]?.method).toBe("GET");
+    expect(client.roomState.value?.roomCode).toBe("ABC123");
+  });
+
+  it("retries malformed HTTP sync even while a stream was sending heartbeats", async () => {
+    await client.createServerRoom();
+    const events = source();
+    fetchMock.mockResolvedValueOnce(json({ room: { revision: 2 } }));
+    await client.syncCurrentRoomState();
+    events.dispatchEvent(new MessageEvent("heartbeat", { data: JSON.stringify(Date.now()) }));
+    expect(client.roomConnectionState.value).toBe("reconnecting");
+    await vi.advanceTimersByTimeAsync(2250);
+    expect(client.roomConnectionState.value).toBe("connected");
+    expect(source()).not.toBe(events);
   });
 
   it("uses private credentials for SSE, sync, start, guesses, skips and leave", async () => {

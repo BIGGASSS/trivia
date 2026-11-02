@@ -1,10 +1,11 @@
 // @vitest-environment node
+import { randomUUID } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import type { ClientRequest, Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { createMultiplayerMiddleware } from "../multiplayer";
-import { createRoomManager } from "../room-manager";
+import { createRoomManager, maximumPlayerSubscriptions } from "../room-manager";
 import type { RoomManager } from "../room-manager";
 import type { MultiplayerApiResponse, PublicRoomState } from "../../shared/multiplayer-types";
 
@@ -108,6 +109,59 @@ describe("multiplayer HTTP/SSE adapter", () => {
       },
     };
   };
+
+  it("replays concurrent joins and lost-response retries after the match starts", async () => {
+    const host = await jsonRequest("", {});
+    const code = host.payload.room.roomCode;
+    const joinRequestId = randomUUID();
+    const joins = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        jsonRequest(`/${code}/join`, { playerName: "Guest", joinRequestId }),
+      ),
+    );
+    expect(joins.every((join) => join.status === 200)).toBe(true);
+    expect(new Set(joins.map((join) => join.payload.playerId)).size).toBe(1);
+    expect(new Set(joins.map((join) => join.payload.sessionToken)).size).toBe(1);
+    expect(manager.getRoom(code)?.players).toHaveLength(2);
+    await jsonRequest(`/${code}/start`, { sessionToken: host.payload.sessionToken });
+    const retry = await jsonRequest(`/${code}/join`, { joinRequestId });
+    expect(retry.status).toBe(200);
+    expect(retry.payload.playerId).toBe(joins[0]!.payload.playerId);
+    expect(retry.payload.sessionToken).toBe(joins[0]!.payload.sessionToken);
+    expect(retry.payload.room.status).toBe("playing");
+    expect(retry.payload.room.serverNow).toBeGreaterThanOrEqual(host.payload.room.serverNow);
+    expect(JSON.stringify(retry.payload)).not.toContain(joinRequestId);
+  });
+
+  it("rejects excess SSE subscriptions as JSON before committing event-stream headers", async () => {
+    const { code, host, guest } = await createJoinedRoom();
+    const streams = [];
+    for (let index = 0; index < maximumPlayerSubscriptions; index += 1) {
+      streams.push(await openEvents(code, host.sessionToken!));
+    }
+    const revision = manager.getRoom(code)!.revision;
+    const rejected = await jsonRequest(`/${code}/events?sessionToken=${host.sessionToken}`);
+    expect(rejected.status).toBe(429);
+    expect(rejected.headers.get("content-type")).toBe("application/json");
+    expect(manager.getRoom(code)!.revision).toBe(revision);
+    expect((await openEvents(code, guest.sessionToken!)).response.status).toBe(200);
+    expect(streams.every((stream) => !stream.ended)).toBe(true);
+  });
+
+  it("logs loader failures and returns a generic 500 rather than leaking details", async () => {
+    const error = new Error("secret /srv/private/countries.json");
+    const create = vi.spyOn(manager, "createRoom").mockRejectedValueOnce(error);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await jsonRequest("", {});
+      expect(response.status).toBe(500);
+      expect(response.payload).toEqual({ error: "Internal server error." });
+      expect(log).toHaveBeenCalledExactlyOnceWith("Multiplayer request failed.", error);
+    } finally {
+      create.mockRestore();
+      log.mockRestore();
+    }
+  });
 
   it("creates and joins with private credentials that never appear in snapshots", async () => {
     const create = await jsonRequest("", { playerName: "Host" });
@@ -299,7 +353,10 @@ describe("multiplayer HTTP/SSE adapter", () => {
     await vi.waitFor(() =>
       expect(stream.states[stream.states.length - 1]?.revision).toBe(start.payload.room.revision),
     );
-    expect(stream.states[stream.states.length - 1]).toEqual(start.payload.room);
+    expect(stream.states[stream.states.length - 1]).toEqual({
+      ...start.payload.room,
+      serverNow: expect.any(Number),
+    });
     const answer = await jsonRequest(`/${code}/skip`, {
       sessionToken: host.sessionToken,
       matchId: start.payload.room.matchId,
@@ -310,9 +367,10 @@ describe("multiplayer HTTP/SSE adapter", () => {
         true,
       ),
     );
-    expect(stream.states.find((state) => state.revision === answer.payload.room.revision)).toEqual(
-      answer.payload.room,
-    );
+    expect(stream.states.find((state) => state.revision === answer.payload.room.revision)).toEqual({
+      ...answer.payload.room,
+      serverNow: expect.any(Number),
+    });
     const revisions = stream.states.map((state) => state.revision);
     expect(
       revisions.every((revision, index) => index === 0 || revision > revisions[index - 1]!),

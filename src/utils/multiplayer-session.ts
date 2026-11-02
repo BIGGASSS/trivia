@@ -15,6 +15,43 @@ export interface StoredMultiplayerSession {
   updatedAt: number;
 }
 
+/** A private idempotency credential, retained until join is confirmed or rejected. */
+export interface PendingMultiplayerJoin {
+  joinRequestId: string;
+  playerName: string;
+}
+
+const pendingJoinKey = (roomCode: string) =>
+  `world-trivia.multiplayer-pending-join.${normalizeRoomCode(roomCode)}`;
+
+export const getPendingMultiplayerJoin = (roomCode: string): PendingMultiplayerJoin | null => {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(pendingJoinKey(roomCode)) ?? "null");
+    return value &&
+      typeof value.joinRequestId === "string" &&
+      value.joinRequestId.length > 0 &&
+      typeof value.playerName === "string"
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Fail closed: sending an unpersisted identity could orphan a membership on reload. */
+export const savePendingMultiplayerJoin = (roomCode: string, pending: PendingMultiplayerJoin) => {
+  window.localStorage.setItem(pendingJoinKey(roomCode), JSON.stringify(pending));
+};
+
+export const removePendingMultiplayerJoin = (roomCode: string, expectedJoinRequestId: string) => {
+  try {
+    if (getPendingMultiplayerJoin(roomCode)?.joinRequestId === expectedJoinRequestId)
+      window.localStorage.removeItem(pendingJoinKey(roomCode));
+  } catch {
+    // Keeping an idempotent retry credential is safer than losing it.
+  }
+};
+
 const multiplayerSessionStorageKey = "world-trivia.multiplayer-sessions";
 export const sessionTtlMilliseconds = 24 * 60 * 60 * 1000;
 

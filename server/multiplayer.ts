@@ -60,38 +60,58 @@ const handleRoomEvents = (
   room: MultiplayerRoom,
   playerId: string,
 ) => {
+  manager.assertClientCapacity(room, playerId);
   response.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-store, no-transform",
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
-  response.write("retry: 1000\n\n");
-
   let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   let unregister = () => {};
   const close = () => {
     if (closed) return;
     closed = true;
     clearInterval(heartbeat);
+    heartbeat = undefined;
     unregister();
     response.end();
   };
   // The response, not the consumed request body, owns the SSE lifetime.
   response.on("close", close);
   response.on("error", close);
-  const heartbeat = setInterval(() => {
-    if (response.destroyed || response.writableEnded) {
-      close();
-      return;
+  // Never queue another frame once Node signals backpressure. Destroy rather
+  // than end: end() could retain the already-buffered frame indefinitely.
+  const writeFrame = (frame: string) => {
+    if (closed) return false;
+    try {
+      if (!response.destroyed && !response.writableEnded && response.write(frame)) {
+        // A synchronous terminal event during write must not start new resources.
+        return !closed;
+      }
+    } catch {
+      // Treat write failures the same as a transport that cannot keep up.
     }
-    response.write(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+    response.destroy();
+    return false;
+  };
+  if (!writeFrame("retry: 1000\n\n")) {
+    close();
+    return;
+  }
+  heartbeat = setInterval(() => {
+    if (!writeFrame(`event: heartbeat\ndata: ${Date.now()}\n\n`)) close();
   }, sseHeartbeatMilliseconds);
 
   unregister = manager.registerClient(room, {
     playerId,
     sendState: (state) => {
-      if (!closed) response.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
+      if (!writeFrame(`event: state\ndata: ${JSON.stringify(state)}\n\n`)) {
+        // Let the manager remove this subscription before invoking close(), so
+        // cleanup cannot recursively publish while the current broadcast runs.
+        throw new Error("SSE transport is closed or backpressured.");
+      }
     },
     close,
   });

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { shallowRef } from "vue";
-import { useMapViewport } from "../useMapViewport";
+import { countries } from "../../../public/countries.paths.json";
+import { getLargestSubpathBounds } from "@/utils/svg-path-bounds";
+import { maximumMapZoom, useMapViewport } from "../useMapViewport";
 import { missedCountryRevealRoundDelayMilliseconds, useRevealZoom } from "../useRevealZoom";
 
 const setup = () => {
@@ -91,6 +93,40 @@ describe("useRevealZoom", () => {
       vi.advanceTimersByTime(missedCountryRevealRoundDelayMilliseconds);
       reveal.cancelRevealZoomAnimation(true);
       expect(viewport.getCurrentMapViewState()).toEqual(manualView);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each([false, true])(
+    "fits Norway from zoom 64 and restores the original view (reduced motion: %s)",
+    (reduced) => {
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn(() => ({ matches: reduced })),
+      );
+      const norway = countries.find((country) => country.name === "Norway")!;
+      const bounds = getLargestSubpathBounds(norway.path)!;
+      const viewport = useMapViewport();
+      viewport.setMapViewState({ zoom: maximumMapZoom, center: { x: -50, y: -20 } });
+      const original = viewport.getCurrentMapViewState();
+      const reveal = useRevealZoom(viewport, shallowRef([norway]));
+
+      expect(reveal.playMissedCountryRevealZoom(norway.id)).toBe(true);
+      vi.advanceTimersByTime(1200);
+      const target = viewport.getCurrentMapViewState();
+      const size = viewport.getViewBoxSize(target.zoom);
+      expect(target.zoom).toBeLessThan(original.zoom);
+      expect(target.center.x).toBeCloseTo(bounds.x + bounds.width / 2);
+      expect(target.center.y).toBeCloseTo(bounds.y + bounds.height / 2);
+      expect(bounds.width / size.width).toBeLessThanOrEqual(0.62 + 1e-10);
+      expect(bounds.height / size.height).toBeLessThanOrEqual(0.62 + 1e-10);
+      expect(bounds.x).toBeGreaterThan(target.center.x - size.width / 2);
+      expect(bounds.y).toBeGreaterThan(target.center.y - size.height / 2);
+      expect(bounds.x + bounds.width).toBeLessThan(target.center.x + size.width / 2);
+      expect(bounds.y + bounds.height).toBeLessThan(target.center.y + size.height / 2);
+
+      vi.advanceTimersByTime(missedCountryRevealRoundDelayMilliseconds - 1200);
+      expect(viewport.getCurrentMapViewState()).toEqual(original);
       expect(vi.getTimerCount()).toBe(0);
     },
   );
