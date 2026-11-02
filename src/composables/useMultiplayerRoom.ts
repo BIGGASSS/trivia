@@ -84,6 +84,9 @@ export const useMultiplayerRoom = (options: MultiplayerRoomOptions) => {
       : Date.now();
   function updateServerClock(serverNow: number) {
     if (!Number.isFinite(serverNow)) throw new Error("Invalid multiplayer server timestamp.");
+    // HTTP snapshots and SSE heartbeats arrive independently of room revisions.
+    // Older/duplicate samples must not rewind the clock or reset elapsed time.
+    if (serverClockAnchor && serverNow <= serverClockAnchor.time) return;
     serverClockAnchor = { time: serverNow, receivedAt: performance.now() };
     now.value = adjustedNow();
   }

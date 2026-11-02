@@ -333,6 +333,48 @@ describe("multiplayer client lifecycle", () => {
     expect(client.now.value).toBe(serverNow + 250);
   });
 
+  it.each([1, 2])(
+    "ignores a delayed HTTP clock sample while applying room revision %s",
+    async (revision) => {
+      const room = roomSnapshot({ serverNow: 1000, roundEndsAt: 11_000 });
+      fetchMock.mockResolvedValueOnce(json({ sessionToken: "private-token", room }));
+      await client.createServerRoom();
+      await flushPromises();
+      const pending = deferred();
+      fetchMock.mockReturnValueOnce(pending.promise);
+      const sync = client.syncCurrentRoomState();
+      source().dispatchEvent(new MessageEvent("heartbeat", { data: "6000" }));
+      expect(client.now.value).toBe(6000);
+
+      pending.resolve(json({ room: { ...room, revision } }));
+      await sync;
+      expect(client.roomState.value?.revision).toBe(revision);
+      expect(client.now.value).toBe(6000);
+      expect(Math.ceil((room.roundEndsAt! - client.now.value) / 1000)).toBe(5);
+
+      // A stale response must not postpone the deadline-triggered resync.
+      await vi.advanceTimersByTimeAsync(5250);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it.each([5000, 6000])("ignores stale or repeated heartbeat timestamp %s", async (timestamp) => {
+    await client.createServerRoom();
+    client.detachRoom();
+    // Detaching resets clock freshness, even if the next server clock is earlier.
+    fetchMock.mockResolvedValueOnce(
+      json({ sessionToken: "private-token", room: roomSnapshot({ serverNow: 1000 }) }),
+    );
+    await client.createServerRoom();
+    expect(client.now.value).toBe(1000);
+    source().dispatchEvent(new MessageEvent("heartbeat", { data: "6000" }));
+    await vi.advanceTimersByTimeAsync(250);
+    source().dispatchEvent(new MessageEvent("heartbeat", { data: String(timestamp) }));
+    expect(client.now.value).toBe(6250);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(client.now.value).toBe(6500);
+  });
+
   it("retains a join identity after a detached admission attempt", async () => {
     client.multiplayerRoomCodeInput.value = "ABC123";
     const pending = deferred();
