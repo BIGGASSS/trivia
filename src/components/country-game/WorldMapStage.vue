@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref, toRef, watch } from "vue";
+import { nextTick, onMounted, onUnmounted, ref, toRef, watch } from "vue";
 import type { AnswerState } from "@shared/multiplayer-types";
 import type { CountryPath } from "@/types/game";
 import { useMapViewport } from "@/composables/useMapViewport";
@@ -102,11 +102,29 @@ const getCountryTabIndex = (index: number) => {
   return index === focusedCountryIndex.value ? 0 : -1;
 };
 
+// Only keyboard focus should scroll the map to the focused country.
+let lastInputWasPointer = false;
+
+const markPointerInput = () => {
+  lastInputWasPointer = true;
+};
+
+const markKeyboardInput = () => {
+  lastInputWasPointer = false;
+};
+
+onMounted(() => {
+  document.addEventListener("pointerdown", markPointerInput, true);
+  document.addEventListener("keydown", markKeyboardInput, true);
+});
+
 const handleCountryFocus = (index: number) => {
   focusedCountryIndex.value = index;
 
   // Pointer focus must not move the country out from under a click or drag.
-  if (props.guessingDisabled || isPanning.value || isPinchingMap.value) {
+  // Touch taps focus the path after pointerup (via compatibility mouse
+  // events), when the pan has already ended, so also check input modality.
+  if (props.guessingDisabled || lastInputWasPointer || isPanning.value || isPinchingMap.value) {
     return;
   }
 
@@ -200,6 +218,8 @@ const handleCountryKeydown = (event: KeyboardEvent, country: CountryPath, index:
 };
 
 onUnmounted(() => {
+  document.removeEventListener("pointerdown", markPointerInput, true);
+  document.removeEventListener("keydown", markKeyboardInput, true);
   cancelRevealZoomAnimation();
   teardown();
 });
