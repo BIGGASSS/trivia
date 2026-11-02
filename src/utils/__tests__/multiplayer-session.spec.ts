@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   getStoredMultiplayerSession,
+  getPendingMultiplayerJoin,
+  savePendingMultiplayerJoin,
+  removePendingMultiplayerJoin,
   getStoredMultiplayerSessions,
   removeMultiplayerSession,
   saveMultiplayerSession,
@@ -21,6 +24,33 @@ describe("multiplayer session store", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("persists pending join credentials and conditionally removes only the matching identity", () => {
+    const pending = { joinRequestId: crypto.randomUUID(), playerName: "Ada" };
+    savePendingMultiplayerJoin("abc-123", pending);
+    expect(getPendingMultiplayerJoin("ABC123")).toEqual(pending);
+    removePendingMultiplayerJoin("ABC123", "obsolete-id");
+    expect(getPendingMultiplayerJoin("ABC123")).toEqual(pending);
+    removePendingMultiplayerJoin("ABC123", pending.joinRequestId);
+    expect(getPendingMultiplayerJoin("ABC123")).toBeNull();
+  });
+
+  it("does not silently accept a pending identity that could not be persisted", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("Full");
+    });
+    expect(() =>
+      savePendingMultiplayerJoin("ABC123", { joinRequestId: "id", playerName: "Ada" }),
+    ).toThrow("Full");
+  });
+
+  it("ignores malformed pending join data", () => {
+    window.localStorage.setItem(
+      "world-trivia.multiplayer-pending-join.ABC123",
+      '{"joinRequestId":1}',
+    );
+    expect(getPendingMultiplayerJoin("ABC123")).toBeNull();
   });
 
   it("saves private sessions keyed by normalized room code", () => {

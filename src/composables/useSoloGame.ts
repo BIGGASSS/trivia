@@ -1,13 +1,12 @@
 /**
- * Solo game engine: round lifecycle, timers, scoring, and streaks. Logic
- * moved verbatim from the original WorldMap component. Cross-cutting
+ * Solo game engine: round lifecycle, timers, scoring, and streaks. Cross-cutting
  * concerns (routing, multiplayer teardown, map zoom reset) stay in the
  * orchestrating component.
  */
 import { computed, ref } from "vue";
 import type { Ref, ShallowRef } from "vue";
 import { defaultRoundCount, roundDurationSeconds } from "@shared/game-constants";
-import { clamp } from "@shared/game-utils";
+import { clamp, parseRoundCount } from "@shared/game-utils";
 import type {
   RoundCountry,
   RoundPerformance,
@@ -44,6 +43,7 @@ export const useSoloGame = (
   const isRoundLocked = ref(false);
   const nextRoundTimeout = ref<number | null>(null);
   const roundTimer = ref<number | null>(null);
+  let roundEndsAt: number | null = null;
 
   function clearPendingRound() {
     if (nextRoundTimeout.value !== null) {
@@ -53,6 +53,7 @@ export const useSoloGame = (
   }
 
   function clearRoundTimer() {
+    roundEndsAt = null;
     if (roundTimer.value !== null) {
       window.clearInterval(roundTimer.value);
       roundTimer.value = null;
@@ -86,8 +87,7 @@ export const useSoloGame = (
   };
 
   const getConfiguredRoundCount = () => {
-    const numericRoundCount = Number(roundCountSetting.value) || defaultRoundCount;
-    const clampedRoundCount = clamp(Math.round(numericRoundCount), 1, maximumRoundCount.value);
+    const clampedRoundCount = parseRoundCount(roundCountSetting.value, countries.value.length);
 
     roundCountSetting.value = clampedRoundCount;
 
@@ -214,8 +214,28 @@ export const useSoloGame = (
     );
   }
 
+  function expireSoloRoundIfNeeded() {
+    if (roundEndsAt === null) {
+      return false;
+    }
+
+    soloTimeLeft.value = clamp(
+      Math.ceil((roundEndsAt - Date.now()) / 1000),
+      0,
+      roundDurationSeconds,
+    );
+
+    if (soloTimeLeft.value > 0) {
+      return false;
+    }
+
+    handleSoloRoundTimeout();
+    return true;
+  }
+
   function startSoloRoundTimer() {
     clearRoundTimer();
+    roundEndsAt = Date.now() + roundDurationSeconds * 1000;
     soloTimeLeft.value = roundDurationSeconds;
 
     roundTimer.value = window.setInterval(() => {
@@ -223,11 +243,7 @@ export const useSoloGame = (
         return;
       }
 
-      soloTimeLeft.value = Math.max(0, soloTimeLeft.value - 1);
-
-      if (soloTimeLeft.value === 0) {
-        handleSoloRoundTimeout();
-      }
+      expireSoloRoundIfNeeded();
     }, 1000);
   }
 
@@ -300,6 +316,10 @@ export const useSoloGame = (
       return;
     }
 
+    if (expireSoloRoundIfNeeded()) {
+      return;
+    }
+
     lastSelectedCountryId.value = country.id;
 
     if (country.id === currentCountry.value.id) {
@@ -316,6 +336,10 @@ export const useSoloGame = (
 
   const skip = () => {
     if (!currentCountry.value || isRoundLocked.value || gamePhase.value !== "playing") {
+      return;
+    }
+
+    if (expireSoloRoundIfNeeded()) {
       return;
     }
 

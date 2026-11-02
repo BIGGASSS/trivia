@@ -36,6 +36,7 @@ interface GeoJsonFeatureCollection {
 export interface BuildOptions {
   simplificationTolerance: number;
   minimumRingArea: number;
+  /** Limit exterior rings only; every retained polygon keeps all of its holes. */
   maximumRingsPerCountry: number;
   coordinateDecimals: number;
 }
@@ -328,50 +329,58 @@ export const buildCountryPaths = (
     return simplified.length >= 3 ? simplified : getFallbackTriangle(points);
   };
 
-  const getOuterRingInfos = (geometry: GeoJsonGeometry | null | undefined) => {
+  const getPolygonInfos = (geometry: GeoJsonGeometry | null | undefined) => {
     if (!geometry || !Array.isArray(geometry.coordinates)) {
       return [];
     }
 
-    const outerRings =
+    const polygons =
       geometry.type === "Polygon"
-        ? [geometry.coordinates[0]]
+        ? [geometry.coordinates]
         : geometry.type === "MultiPolygon"
-          ? geometry.coordinates.map((polygon) => (Array.isArray(polygon) ? polygon[0] : null))
+          ? geometry.coordinates
           : [];
 
-    return outerRings.flatMap((ring) => {
-      if (!Array.isArray(ring)) {
+    return polygons.flatMap((polygon) => {
+      if (!Array.isArray(polygon)) {
         return [];
       }
 
-      const points = removeClosingPoint(
-        ring.map(toPoint).filter((point): point is Point => point !== null),
-      );
+      const rings = polygon.map((ring) => {
+        if (!Array.isArray(ring)) {
+          return null;
+        }
 
-      if (points.length < 3) {
-        return [];
-      }
+        const points = removeClosingPoint(
+          ring.map(toPoint).filter((point): point is Point => point !== null),
+        );
 
-      stats.sourceRingCount += 1;
-      stats.sourcePointCount += points.length;
+        if (points.length < 3) {
+          return null;
+        }
 
-      return [{ points, area: getRingArea(points) }];
+        stats.sourceRingCount += 1;
+        stats.sourcePointCount += points.length;
+        return { points, area: getRingArea(points) };
+      });
+      const exterior = rings[0];
+
+      // Never promote a hole to an exterior when the exterior is unusable.
+      return exterior ? [{ exterior, holes: rings.slice(1).filter((ring) => ring !== null) }] : [];
     });
   };
 
   const selectFeatureRings = (feature: GeoJsonFeature, featureIndex: number): RingInfo[] => {
-    const ringInfos = getOuterRingInfos(feature.geometry).sort(
-      (first, second) => second.area - first.area,
+    const polygons = getPolygonInfos(feature.geometry).sort(
+      (first, second) => second.exterior.area - first.exterior.area,
     );
 
-    if (ringInfos.length === 0) {
-      return [];
-    }
-
-    const selectedRingInfos = ringInfos
-      .filter((ringInfo, index) => index === 0 || ringInfo.area >= minimumRingArea)
+    // Filter islands, not holes: dropping even a tiny hole fills an enclave.
+    // Flatten only after selection so holes cannot outlive their exterior.
+    const selectedRingInfos = polygons
+      .filter((polygon, index) => index === 0 || polygon.exterior.area >= minimumRingArea)
       .slice(0, maximumRingsPerCountry)
+      .flatMap(({ exterior, holes }) => [exterior, ...holes])
       .map((ringInfo, ringIndex) => ({
         ...ringInfo,
         featureIndex,
@@ -415,7 +424,32 @@ export const buildCountryPaths = (
       .filter((index) => isJunctionPoint(ring, index, topology));
 
     if (breakIndexes.length === 0) {
-      return simplifyClosedRing(ring.points);
+      const shared = ring.keys.every(
+        (key, index) =>
+          (topology.edgeUseCounts.get(
+            edgeKey(key, ring.keys[(index + 1) % ring.keys.length] as string),
+          ) ?? 0) > 1,
+      );
+      if (!shared) {
+        return simplifyClosedRing(ring.points);
+      }
+
+      // An enclave's exterior and its host's hole share an entire closed arc.
+      // Canonicalize its start and direction before simplification so reversed
+      // or rotated input rings cannot produce mismatched borders.
+      const start = ring.keys.reduce(
+        (minimum, key, index) => (key < (ring.keys[minimum] as string) ? index : minimum),
+        0,
+      );
+      const forward = [...ring.points.slice(start), ...ring.points.slice(0, start)];
+      const reverse = [forward[0] as Point, ...forward.slice(1).reverse()];
+      const forwardKey = forward.map(pointKey).join("|");
+      const reverseKey = reverse.map(pointKey).join("|");
+      const key = `closed:${forwardKey < reverseKey ? forwardKey : reverseKey}`;
+      if (!arcCache.has(key)) {
+        arcCache.set(key, simplifyClosedRing(forwardKey < reverseKey ? forward : reverse));
+      }
+      return arcCache.get(key) as Point[];
     }
 
     const simplifiedPoints: Point[] = [];
@@ -551,7 +585,7 @@ const main = async () => {
   );
   console.log(
     `Kept ${stats.keptRingCount.toLocaleString()} of ` +
-      `${stats.sourceRingCount.toLocaleString()} outer rings and simplified ` +
+      `${stats.sourceRingCount.toLocaleString()} rings (including holes) and simplified ` +
       `${stats.keptSourcePointCount.toLocaleString()} selected points to ` +
       `${stats.outputPointCount.toLocaleString()} points.`,
   );
@@ -559,9 +593,7 @@ const main = async () => {
     `Options: tolerance=${options.simplificationTolerance}, minArea=${options.minimumRingArea}, ` +
       `maxRingsPerCountry=${options.maximumRingsPerCountry}, decimals=${options.coordinateDecimals}.`,
   );
-  console.log(
-    `Source outer rings contained ${stats.sourcePointCount.toLocaleString()} total points.`,
-  );
+  console.log(`Source rings contained ${stats.sourcePointCount.toLocaleString()} total points.`);
 };
 
 const isRunDirectly =

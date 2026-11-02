@@ -88,6 +88,8 @@ export interface RoomManagerOptions {
 const defaultRevealDelayMilliseconds = 2600;
 const defaultRoomTtlMilliseconds = 30 * 60 * 1000;
 const defaultMaximumRoomCount = 200;
+/** Allow a few tabs, but bound per-session transport and serialization costs. */
+export const maximumPlayerSubscriptions = 3;
 
 export const createRoomManager = (options: RoomManagerOptions) => {
   const {
@@ -101,8 +103,15 @@ export const createRoomManager = (options: RoomManagerOptions) => {
   const roomClients = new Map<string, Set<RoomClientConnection>>();
   // Credentials never live on players or in public room snapshots.
   const roomSessions = new Map<string, Map<string, string>>();
+  // Join request IDs are bearer secrets too: never attach them to room/player data.
+  const roomJoinRequests = new Map<
+    string,
+    Map<string, { playerId: string; sessionToken: string }>
+  >();
   let pendingRoomCount = 0;
   let disposed = false;
+  const broadcastingRooms = new WeakSet<MultiplayerRoom>();
+  const pendingBroadcasts = new WeakSet<MultiplayerRoom>();
 
   const generateRoomCode = () => {
     let code = "";
@@ -178,6 +187,7 @@ export const createRoomManager = (options: RoomManagerOptions) => {
     clearRoomTimers(room);
     rooms.delete(room.code);
     roomSessions.delete(room.code);
+    roomJoinRequests.delete(room.code);
     for (const player of room.players) player.connected = false;
     revokeClients(room);
   };
@@ -202,6 +212,7 @@ export const createRoomManager = (options: RoomManagerOptions) => {
     return {
       roomCode: room.code,
       revision: room.revision,
+      serverNow: Date.now(),
       matchId: room.matchId,
       roundId: room.roundId,
       status: room.status,
@@ -251,21 +262,38 @@ export const createRoomManager = (options: RoomManagerOptions) => {
     room.updatedAt = Date.now();
     updateConnectionFlags(room);
     room.revision += 1;
-    const clients = roomClients.get(room.code);
-    if (!clients) return;
-
-    let removedClient = false;
-    for (const client of clients) {
-      try {
-        client.sendState(serializeRoom(room, client.playerId));
-      } catch {
-        clients.delete(client);
-        closeClient(client);
-        removedClient = true;
-      }
+    // Transport callbacks can synchronously unregister during write/destroy.
+    // Commit that mutation now, but let the outer delivery restart at the newer
+    // revision instead of recursively delivering it twice to healthy peers.
+    if (broadcastingRooms.has(room)) {
+      pendingBroadcasts.add(room);
+      return;
     }
-    if (clients.size === 0) roomClients.delete(room.code);
-    if (removedClient) broadcastRoom(room);
+    broadcastingRooms.add(room);
+    try {
+      do {
+        pendingBroadcasts.delete(room);
+        const clients = roomClients.get(room.code);
+        if (!clients) break;
+        let removedClient = false;
+        for (const client of clients) {
+          try {
+            client.sendState(serializeRoom(room, client.playerId));
+          } catch {
+            clients.delete(client);
+            closeClient(client);
+            removedClient = true;
+          }
+          if (pendingBroadcasts.has(room) || rooms.get(room.code) !== room) break;
+        }
+        if (clients.size === 0 && roomClients.get(room.code) === clients)
+          roomClients.delete(room.code);
+        if (removedClient) broadcastRoom(room);
+      } while (pendingBroadcasts.has(room) && rooms.get(room.code) === room);
+    } finally {
+      broadcastingRooms.delete(room);
+      pendingBroadcasts.delete(room);
+    }
   };
 
   const chooseCountry = (room: MultiplayerRoom) => {
@@ -449,12 +477,33 @@ export const createRoomManager = (options: RoomManagerOptions) => {
 
   const joinRoom = (room: MultiplayerRoom, body: RequestBody) => {
     requireRoom(room);
+    const joinRequestId = body.joinRequestId;
+    // UUIDv4 provides 122 random bits when generated with crypto.randomUUID().
+    // Legacy clients may omit it, but supplied keys must not be guessable short IDs.
+    if (
+      joinRequestId !== undefined &&
+      (typeof joinRequestId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          joinRequestId,
+        ))
+    ) {
+      throw new HttpError(400, "joinRequestId must be a random UUIDv4.");
+    }
+    const key = typeof joinRequestId === "string" ? joinRequestId.toLowerCase() : undefined;
+    const previous = key === undefined ? undefined : roomJoinRequests.get(room.code)?.get(key);
+    // Resolve retries before capacity/status checks, without mutating the room.
+    if (previous) return { ...previous };
     if (room.status !== "lobby") throw new HttpError(400, "This room is already in a game.");
     if (room.players.length >= maximumPlayerCount) throw new HttpError(400, "This room is full.");
     const playerId = randomUUID();
     const playerName = sanitizePlayerName(body.playerName, `Player ${room.players.length + 1}`);
     room.players.push(createPlayer(playerId, playerName));
     const sessionToken = issueSession(room, playerId);
+    if (key !== undefined) {
+      const requests = roomJoinRequests.get(room.code) ?? new Map();
+      requests.set(key, { playerId, sessionToken });
+      roomJoinRequests.set(room.code, requests);
+    }
     broadcastRoom(room);
     return { playerId, sessionToken };
   };
@@ -467,6 +516,11 @@ export const createRoomManager = (options: RoomManagerOptions) => {
     for (const [token, id] of sessions ?? []) {
       if (id === playerId) sessions?.delete(token);
     }
+    const requests = roomJoinRequests.get(room.code);
+    for (const [key, issued] of requests ?? []) {
+      if (issued.playerId === playerId) requests?.delete(key);
+    }
+    if (requests?.size === 0) roomJoinRequests.delete(room.code);
     revokeClients(room, playerId);
     if (room.status === "lobby") {
       room.players = room.players.filter((roomPlayer) => roomPlayer.id !== playerId);
@@ -536,8 +590,19 @@ export const createRoomManager = (options: RoomManagerOptions) => {
     if (!maybeFinishRoundEarly(room)) broadcastRoom(room);
   };
 
+  /** Call before sending SSE headers; registerClient also enforces this atomically. */
+  const assertClientCapacity = (room: MultiplayerRoom, playerId: string) => {
+    requireActivePlayer(room, playerId);
+    const count = Array.from(roomClients.get(room.code) ?? []).filter(
+      (client) => client.playerId === playerId,
+    ).length;
+    if (count >= maximumPlayerSubscriptions) {
+      throw new HttpError(429, "Too many event streams for this player.");
+    }
+  };
+
   const registerClient = (room: MultiplayerRoom, client: RoomClientConnection) => {
-    requireActivePlayer(room, client.playerId);
+    assertClientCapacity(room, client.playerId);
     const clients = roomClients.get(room.code) ?? new Set<RoomClientConnection>();
     clients.add(client);
     roomClients.set(room.code, clients);
@@ -573,6 +638,7 @@ export const createRoomManager = (options: RoomManagerOptions) => {
   };
 
   return {
+    assertClientCapacity,
     authenticatePlayer,
     broadcastRoom,
     createRoom,

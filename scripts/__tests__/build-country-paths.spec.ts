@@ -100,6 +100,93 @@ describe("buildCountryPaths", () => {
     expect(countries[0]?.path.match(/M/g)).toHaveLength(1);
   });
 
+  it.each(["Polygon", "MultiPolygon"])(
+    "preserves every hole of a retained %s despite area and ring limits",
+    (type) => {
+      const rings = [square(0, 0, 10), square(1, 1, 0.01), square(2, 2, 1)];
+      const { countries, stats } = buildCountryPaths(
+        {
+          features: [
+            {
+              geometry: {
+                type,
+                coordinates: type === "Polygon" ? rings : [rings],
+              },
+            },
+          ],
+        },
+        { ...defaultBuildOptions, simplificationTolerance: 0, maximumRingsPerCountry: 1 },
+      );
+
+      expect(countries[0]?.path.match(/M/g)).toHaveLength(3);
+      expect(countries[0]?.path).toContain("M1,-1 1.01,-1 1.01,-1.01 1,-1.01Z");
+      expect(stats.sourceRingCount).toBe(3);
+      expect(stats.keptRingCount).toBe(3);
+    },
+  );
+
+  it.each([
+    { minimumRingArea: 2, maximumRingsPerCountry: 20 },
+    { minimumRingArea: 0, maximumRingsPerCountry: 1 },
+  ])("drops holes along with their discarded exterior (%j)", (selection) => {
+    const { countries, stats } = buildCountryPaths(
+      {
+        features: [
+          {
+            geometry: {
+              type: "MultiPolygon",
+              coordinates: [
+                [square(0, 0, 10), square(1, 1, 1)],
+                [square(20, 20, 1), square(20.1, 20.1, 0.1)],
+              ],
+            },
+          },
+        ],
+      },
+      { ...defaultBuildOptions, ...selection },
+    );
+
+    expect(countries[0]?.path.match(/M/g)).toHaveLength(2);
+    expect(countries[0]?.path).not.toContain("20");
+    expect(stats.sourceRingCount).toBe(4);
+    expect(stats.keptRingCount).toBe(2);
+  });
+
+  it("does not promote a hole when its exterior is invalid", () => {
+    const { countries } = buildCountryPaths({
+      features: [{ geometry: { type: "Polygon", coordinates: [[], square(1, 1, 1)] } }],
+    });
+    expect(countries).toEqual([]);
+  });
+
+  it("simplifies a shared enclave boundary identically with rotated, reversed rings", () => {
+    const boundary = [
+      [2, 2],
+      [3, 2.01],
+      [4, 2],
+      [4, 4],
+      [3, 4.01],
+      [2, 4],
+    ];
+    const reversed = [...boundary.slice(3), ...boundary.slice(0, 3)].reverse();
+    const { countries } = buildCountryPaths({
+      features: [
+        {
+          geometry: {
+            type: "Polygon",
+            coordinates: [square(0, 0, 10), [...boundary, boundary[0]]],
+          },
+        },
+        { geometry: { type: "Polygon", coordinates: [[...reversed, reversed[0]]] } },
+      ],
+    });
+
+    const hole = countries[0]?.path.match(/M[^M]+/g)?.[1];
+    expect(hole).toBeDefined();
+    expect(hole).toBe(countries[1]?.path);
+    expect(hole?.split(" ")).toHaveLength(4);
+  });
+
   it("rounds coordinates to the configured number of decimals", () => {
     const { countries } = buildCountryPaths(
       {

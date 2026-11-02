@@ -64,5 +64,6 @@ export const sendCaughtError = (
     return;
   }
 
-  sendError(response, 400, error instanceof Error ? error.message : fallbackMessage);
+  console.error(fallbackMessage, error);
+  sendError(response, 500, "Internal server error.");
 };

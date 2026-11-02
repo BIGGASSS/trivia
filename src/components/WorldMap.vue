@@ -158,9 +158,16 @@ function syncRouteToState() {
 }
 
 watch(
-  () => route.fullPath,
-  (fullPath) => {
-    if (fullPath === lastInternalPath) {
+  () => {
+    // Query/hash changes (and equivalent room-code spellings) do not leave
+    // the current game. Only synchronize when the effective game route changes.
+    const gameRoute = parseGameRoute();
+    return gameRoute.type === "multiplayer-room"
+      ? `${gameRoute.type}:${gameRoute.roomCode}`
+      : gameRoute.type;
+  },
+  () => {
+    if (route.fullPath === lastInternalPath) {
       lastInternalPath = null;
       return;
     }

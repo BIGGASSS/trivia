@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { createRoomManager, HttpError } from "../room-manager";
+import { randomUUID } from "node:crypto";
+import { createRoomManager, HttpError, maximumPlayerSubscriptions } from "../room-manager";
 import type { CountrySummary, MultiplayerRoom, RoomManager } from "../room-manager";
 import type { PublicRoomState } from "../../shared/multiplayer-types";
 
@@ -159,6 +160,62 @@ describe("createRoomManager", () => {
   });
 
   describe("join and start", () => {
+    it("replays a private join key without mutations even when full or playing", async () => {
+      const { room, playerId } = await manager.createRoom({});
+      const joinRequestId = randomUUID();
+      const joined = manager.joinRoom(room, { joinRequestId, playerName: "Original" });
+      for (let index = 0; index < 3; index += 1) manager.joinRoom(room, {});
+      const stream = connect(manager, room, playerId);
+      for (const playing of [false, true]) {
+        if (playing) manager.startRoom(room);
+        const revision = room.revision;
+        const count = stream.states.length;
+        expect(manager.joinRoom(room, { joinRequestId, playerName: "Changed" })).toEqual(joined);
+        expect(manager.joinRoom(room, { joinRequestId: joinRequestId.toUpperCase() })).toEqual(
+          joined,
+        );
+        expect(room.revision).toBe(revision);
+        expect(stream.states).toHaveLength(count);
+        expect(room.players).toHaveLength(5);
+        expect(manager.getPlayer(room, joined.playerId)?.name).toBe("Original");
+        expect(manager.authenticatePlayer(room, joined.sessionToken).id).toBe(joined.playerId);
+      }
+      const publicData = JSON.stringify([
+        stream.states,
+        manager.serializeRoom(room, joined.playerId),
+      ]);
+      expect(publicData).not.toContain(joinRequestId);
+      expect(publicData).not.toContain(joined.sessionToken);
+      manager.leaveRoom(room, joined.playerId);
+      expect(() => manager.joinRoom(room, { joinRequestId })).toThrow("already in a game");
+      expect(() => manager.authenticatePlayer(room, joined.sessionToken)).toThrow(HttpError);
+    });
+
+    it("scopes join keys to a room and revokes them on lobby leave", async () => {
+      const first = await manager.createRoom({});
+      const second = await manager.createRoom({});
+      const joinRequestId = randomUUID();
+      const guest = manager.joinRoom(first.room, { joinRequestId });
+      const otherGuest = manager.joinRoom(second.room, { joinRequestId });
+      expect(otherGuest.playerId).not.toBe(guest.playerId);
+      expect(otherGuest.sessionToken).not.toBe(guest.sessionToken);
+      manager.leaveRoom(first.room, guest.playerId);
+      const rejoined = manager.joinRoom(first.room, { joinRequestId });
+      expect(rejoined.playerId).not.toBe(guest.playerId);
+      expect(rejoined.sessionToken).not.toBe(guest.sessionToken);
+      expect(() => manager.authenticatePlayer(first.room, guest.sessionToken)).toThrow(HttpError);
+    });
+
+    it.each([null, 123, {}, "", "short", "a".repeat(1000), "00000000-0000-0000-0000-000000000000"])(
+      "rejects malformed join request IDs without consuming membership: %j",
+      async (joinRequestId) => {
+        const { room } = await manager.createRoom({});
+        expect(() => manager.joinRoom(room, { joinRequestId })).toThrow(HttpError);
+        expect(room.players).toHaveLength(1);
+        expect(room.revision).toBe(1);
+      },
+    );
+
     it("sanitizes joining names, issues distinct sessions, and publishes the joined revision", async () => {
       const { room, playerId } = await manager.createRoom({});
       const stream = connect(manager, room, playerId);
@@ -471,6 +528,35 @@ describe("createRoomManager", () => {
   });
 
   describe("snapshots, subscriptions and cleanup", () => {
+    it("timestamps each serialization without changing its gameplay revision", async () => {
+      const { room, playerId } = await manager.createRoom({});
+      const first = manager.serializeRoom(room, playerId);
+      vi.setSystemTime(9_000);
+      const next = manager.serializeRoom(room, playerId);
+      expect(first.serverNow).toBe(1_000);
+      expect(next.serverNow).toBe(9_000);
+      expect(next.revision).toBe(first.revision);
+    });
+
+    it("caps subscriptions per player without evicting tabs and releases slots on disconnect", async () => {
+      const { room, playerId } = await manager.createRoom({});
+      const guest = manager.joinRoom(room, {});
+      const streams = Array.from({ length: maximumPlayerSubscriptions }, () =>
+        connect(manager, room, playerId),
+      );
+      const revision = room.revision;
+      expect(() => manager.assertClientCapacity(room, playerId)).toThrow(HttpError);
+      expect(() => connect(manager, room, playerId)).toThrow(
+        expect.objectContaining({ statusCode: 429 }),
+      );
+      expect(room.revision).toBe(revision);
+      expect(streams.every((stream) => stream.close.mock.calls.length === 0)).toBe(true);
+      expect(() => connect(manager, room, guest.playerId)).not.toThrow();
+      streams[0]!.unregister();
+      expect(() => connect(manager, room, playerId)).not.toThrow();
+      expect(() => connect(manager, room, playerId)).toThrow(HttpError);
+    });
+
     it("publishes monotonically increasing immutable snapshots matching HTTP serialization", async () => {
       const { room, hostId, guestId } = await createStartedRoom(manager);
       const hostStream = connect(manager, room, hostId);

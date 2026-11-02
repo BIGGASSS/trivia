@@ -37,6 +37,7 @@ const makePlayer = (overrides: Partial<PublicPlayer> = {}): PublicPlayer => ({
 const makeRoom = (overrides: Partial<PublicRoomState> = {}): PublicRoomState => ({
   roomCode,
   revision: 1,
+  serverNow: Date.now(),
   matchId: null,
   roundId: null,
   status: "lobby",
@@ -256,34 +257,32 @@ describe("app routing", () => {
     expect(wrapper.find(".setup-panel").exists()).toBe(true);
   });
 
-  it.each([
-    "/country-game",
-    "/country-game/multiplayer",
-    "/country-game/multiplayer/ABC123",
-    "/country-game/solo?from=history",
-  ])("abandons the solo final delay on external navigation to %s", async (path) => {
-    vi.useFakeTimers();
-    wrapper = await mountApp("/country-game/solo");
+  it.each(["/country-game", "/country-game/multiplayer", "/country-game/multiplayer/ABC123"])(
+    "abandons the solo final delay on external navigation to %s",
+    async (path) => {
+      vi.useFakeTimers();
+      wrapper = await mountApp("/country-game/solo");
 
-    await wrapper.find('input[type="number"]').setValue(1);
-    await wrapper.find(".start-button").trigger("click");
-    const prompted = wrapper.find(".target-country").text().trim();
-    await wrapper.find(`path[aria-label="Guess ${prompted}"]`).trigger("click");
+      await wrapper.find('input[type="number"]').setValue(1);
+      await wrapper.find(".start-button").trigger("click");
+      const prompted = wrapper.find(".target-country").text().trim();
+      await wrapper.find(`path[aria-label="Guess ${prompted}"]`).trigger("click");
 
-    // Unlike the Setup button, back/forward or router navigation reuses the
-    // mounted game view and must explicitly cancel the pending final result.
-    await router.push(path);
-    await flushPromises();
-    expect(wrapper.find(".setup-panel").exists()).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
+      // Unlike the Setup button, back/forward or router navigation reuses the
+      // mounted game view and must explicitly cancel the pending final result.
+      await router.push(path);
+      await flushPromises();
+      expect(wrapper.find(".setup-panel").exists()).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
 
-    await vi.advanceTimersByTimeAsync(15_000);
-    await flushPromises();
-    expect(router.currentRoute.value.fullPath).toBe(path);
-    expect(wrapper.find(".setup-panel").exists()).toBe(true);
-    expect(wrapper.find(".results-panel").exists()).toBe(false);
-    expect(wrapper.find(".map-stage").exists()).toBe(false);
-  });
+      await vi.advanceTimersByTimeAsync(15_000);
+      await flushPromises();
+      expect(router.currentRoute.value.fullPath).toBe(path);
+      expect(wrapper.find(".setup-panel").exists()).toBe(true);
+      expect(wrapper.find(".results-panel").exists()).toBe(false);
+      expect(wrapper.find(".map-stage").exists()).toBe(false);
+    },
+  );
 
   it("cancels the solo reveal and timers when navigating away from the game", async () => {
     vi.useFakeTimers();

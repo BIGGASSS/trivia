@@ -41,6 +41,8 @@ export interface PublicRoomState {
   roomCode: string;
   /** Monotonically increasing version shared by HTTP and SSE snapshots. */
   revision: number;
+  /** Server epoch milliseconds when this snapshot was serialized. */
+  serverNow: number;
   matchId: string | null;
   roundId: string | null;
   status: RoomStatus;
