@@ -27,7 +27,7 @@
     "@playwright/test": "^1.63.0",
     "@tsconfig/node26": "^26.0.1",
     "@types/jsdom": "^28.0.1",
-    "@types/node": "^26.5.1",
+    "@types/node": "^26.6.6",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/test-utils": "^2.4.6",
     "@vue/tsconfig": "^0.9.1",
@@ -47,11 +47,11 @@
     },
     "runtime": {
       "name": "node",
-      "version": "26.8.2",
+      "version": "26.13.0",
       "onFail": "ignore"
     }
   },
   "engines": {
-    "node": ">=26.8.2"
+    "node": ">=26.13.0"
   }
 }
